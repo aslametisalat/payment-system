@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>com.payment</groupId>
+    <artifactId>payment-system</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+    </parent>
+    
+    <modules>
+        <module>service-registry</module>
+        <module>config-server</module>
+        <module>api-gateway</module>
+        <module>common</module>
+        <module>merchant-service</module>
+        <module>acquirer-service</module>
+        <module>issuer-service</module>
+        <module>network-service</module>
+        <module>transaction-service</module>
+        <module>settlement-service</module>
+        <module>reporting-service</module>
+        <module>notification-service</module>
+        <!-- NEW MODULES -->
+        <module>security-service</module>
+        <module>iso8583-service</module>
+        <module>pos-terminal-service</module>
+    </modules>
+    
+    <properties>
+        <java.version>17</java.version>
+        <spring-cloud.version>2023.0.0</spring-cloud.version>
+    </properties>
+    
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
