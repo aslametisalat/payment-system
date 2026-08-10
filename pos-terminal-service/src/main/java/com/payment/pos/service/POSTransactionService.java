@@ -20,19 +20,21 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Random;
 import java.util.UUID;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class POSTransactionService {
-    
+
     private final ISO8583MessageBuilder messageBuilder;
     private final PINBlockService pinBlockService;
     private final MACService macService;
     private final EMVCryptogramService emvService;
     private final CardReaderService cardReader;
     private final ReceiptService receiptService;
+    private final Random random;
     
     // Encryption keys (in real system, these come from HSM)
     private static final String PIN_ENCRYPTION_KEY = "0123456789ABCDEF";
@@ -92,6 +94,12 @@ public class POSTransactionService {
             
             // Step 5: Calculate and add MAC
             log.info("→ Step 5: Calculating MAC...");
+            // Reserve field 64's bitmap bit before hashing: toBitmapHex() is
+            // recomputed from live state, so setting the field only *after*
+            // hashing would make the bitmap seen at verification time differ
+            // from the one that was actually hashed. The MAC's own value is
+            // still excluded from what gets hashed.
+            message.setField(64, "");
             String messageString = messageBuilder.messageToString(message);
             String mac = macService.generateMAC(messageString, MAC_KEY);
             message.setField(64, mac);
@@ -207,13 +215,23 @@ public class POSTransactionService {
     private ISO8583Message sendToAuthorization(ISO8583Message message) {
         // In real system, this sends to issuer via acquirer
         // For simulation, create a response
-        
+
         AuthorizationResponseData responseData = AuthorizationResponseData.builder()
                 .responseCode("00")
                 .authorizationCode(generateAuthCode())
                 .build();
-        
-        return messageBuilder.buildAuthorizationResponse(message, responseData);
+
+        ISO8583Message response = messageBuilder.buildAuthorizationResponse(message, responseData);
+
+        // Mirror step 5 (request MAC) on the response side - same reserve-
+        // the-bit-then-hash-then-fill sequence - otherwise field 64 is never
+        // populated and verifyResponseMAC() below would always fail,
+        // declining every transaction regardless of the response code above.
+        response.setField(64, "");
+        String responseMac = macService.generateMAC(messageBuilder.messageToString(response), MAC_KEY);
+        response.setField(64, responseMac);
+
+        return response;
     }
     
     private boolean verifyResponseMAC(ISO8583Message response) {
@@ -248,22 +266,22 @@ public class POSTransactionService {
     }
     
     private String generateSTAN() {
-        return String.format("%06d", (int)(Math.random() * 1000000));
+        return String.format("%06d", random.nextInt(1000000));
     }
-    
+
     private String generateRRN() {
-        return String.format("%012d", (long)(Math.random() * 1000000000000L));
+        return String.format("%012d", Math.abs(random.nextLong()) % 1000000000000L);
     }
-    
+
     private String generateAuthCode() {
-        return String.format("%06d", (int)(Math.random() * 1000000));
+        return String.format("%06d", random.nextInt(1000000));
     }
-    
+
     private String generateUnpredictableNumber() {
-        return String.format("%08X", (int)(Math.random() * 0xFFFFFFFF));
+        return String.format("%08X", random.nextInt(Integer.MAX_VALUE));
     }
-    
+
     private int getNextATC() {
-        return (int)(Math.random() * 65535);
+        return random.nextInt(65536);
     }
 }
