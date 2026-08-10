@@ -1,9 +1,9 @@
+com\payment\settlement\repository\SettlementRepository.class
+com\payment\settlement\model\Settlement.class
 com\payment\settlement\controller\SettlementController.class
 com\payment\settlement\dto\SettlementResponse.class
 com\payment\settlement\SettlementServiceApplication.class
 com\payment\settlement\dto\SettlementRequest$SettlementRequestBuilder.class
 com\payment\settlement\service\SettlementService.class
-com\payment\settlement\repository\SettlementRepository.class
 com\payment\settlement\dto\SettlementResponse$SettlementResponseBuilder.class
 com\payment\settlement\dto\SettlementRequest.class
-com\payment\settlement\model\Settlement.class
