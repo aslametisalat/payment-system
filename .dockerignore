@@ -1,0 +1,13 @@
+# Build context is now the repo root for every service (see docker-compose.yml).
+# Keep that context small and avoid shipping stale, already-committed build
+# output into the build stage - each Dockerfile runs `mvn clean package`
+# itself, so none of this is needed and copying it just wastes time.
+**/target/
+**/.settings/
+**/.classpath
+**/.project
+.git/
+.idea/
+*.iml
+logs/
+*.log

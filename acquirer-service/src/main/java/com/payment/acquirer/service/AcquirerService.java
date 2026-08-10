@@ -4,12 +4,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
+import java.util.Random;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class AcquirerService {
-    
+
+    private final Random random;
+
     /**
      * Process acquiring - fraud checks, routing
      */
@@ -36,22 +39,25 @@ public class AcquirerService {
         return AcquiringResult.approved();
     }
     
-    private int performFraudCheck(String cardNumber, BigDecimal amount) {
+    // Package-private (not private) so unit tests can exercise the scoring
+    // formula directly with a controlled Random, without needing to reach
+    // it indirectly through processAcquiring().
+    int performFraudCheck(String cardNumber, BigDecimal amount) {
         // Simplified fraud scoring
         int score = 0;
-        
+
         // High amount adds risk
         if (amount.compareTo(new BigDecimal("1000")) > 0) {
             score += 20;
         }
-        
+
         // Random component for simulation
-        score += (int)(Math.random() * 30);
-        
+        score += random.nextInt(30);
+
         return score;
     }
-    
-    private boolean checkVelocity(String cardNumber) {
+
+    boolean checkVelocity(String cardNumber) {
         // In real system, check transaction frequency
         // For simulation, always pass
         return true;
