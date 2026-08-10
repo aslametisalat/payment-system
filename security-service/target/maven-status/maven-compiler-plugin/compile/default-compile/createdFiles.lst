@@ -1,4 +1,0 @@
-com\payment\security\service\EMVCryptogramService.class
-com\payment\security\service\PINBlockService.class
-com\payment\security\SecurityServiceApplication.class
-com\payment\security\service\MACService.class

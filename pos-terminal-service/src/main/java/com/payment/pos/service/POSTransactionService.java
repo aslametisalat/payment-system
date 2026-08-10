@@ -227,18 +227,12 @@ public class POSTransactionService {
 
         ISO8583Message response = messageBuilder.buildAuthorizationResponse(message, responseData);
 
-<<<<<<< HEAD
-        // Sign the response so the terminal can verify its integrity (Field 64: MAC)
-        String responseMessageString = messageBuilder.messageToString(response);
-        String responseMac = macService.generateMAC(responseMessageString, MAC_KEY);
-=======
         // Mirror step 5 (request MAC) on the response side - same reserve-
         // the-bit-then-hash-then-fill sequence - otherwise field 64 is never
         // populated and verifyResponseMAC() below would always fail,
         // declining every transaction regardless of the response code above.
         response.setField(64, "");
         String responseMac = macService.generateMAC(messageBuilder.messageToString(response), MAC_KEY);
->>>>>>> e27e3e7cb96b448dd32bfd1fc0c657e4563f3eb8
         response.setField(64, responseMac);
 
         return response;
