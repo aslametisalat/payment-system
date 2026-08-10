@@ -36,5 +36,32 @@
             <artifactId>bcprov-jdk15on</artifactId>
             <version>1.70</version>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <!-- security-service is dual-purpose: a standalone runnable service
+                 (SecurityServiceApplication, port 8089) AND a library that
+                 issuer-service / pos-terminal-service depend on directly for
+                 PINBlockService/MACService/EMVCryptogramService. Repackaging
+                 in place (the plugin's default behavior) would replace the
+                 plain library jar with a Spring Boot fat jar whose classes
+                 live under BOOT-INF/classes instead of the jar root, breaking
+                 it as a Maven dependency for those modules. A classifier
+                 keeps the plain jar as the main artifact and produces the
+                 executable jar as a separate, classified artifact instead -
+                 same pattern common/pom.xml already uses. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <classifier>exec</classifier>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

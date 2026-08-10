@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import com.payment.security.service.PINBlockService;
@@ -20,10 +21,11 @@ import com.payment.security.service.MACService;
 @Slf4j
 public class CardService {
     private final CardRepository cardRepository;
-    
+
     private final PINBlockService pinBlockService;
     private final EMVCryptogramService emvService;
     private final MACService macService;
+    private final Random random;
 
     private static final String PIN_DECRYPTION_KEY = "0123456789ABCDEF";
     private static final String MAC_KEY = "FEDCBA9876543210";
@@ -161,7 +163,7 @@ public class CardService {
     }
     
     private String generateAuthCode() {
-        return String.format("%06d", (int)(Math.random() * 1000000));
+        return String.format("%06d", random.nextInt(1000000));
     }
     
     /**

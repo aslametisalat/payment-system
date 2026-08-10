@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: transaction-service
+  datasource:
+    url: jdbc:h2:mem:transactiondb-test;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+# Tests run a single service in isolation - there is no Eureka server or
+# Config server around, so the discovery client is disabled and the
+# IssuerClient Feign bean is replaced with a mock instead of being resolved
+# over the network.
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false

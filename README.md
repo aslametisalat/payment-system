@@ -149,6 +149,8 @@ cd transaction-service && mvn spring-boot:run &
 cd settlement-service && mvn spring-boot:run &
 cd reporting-service && mvn spring-boot:run &
 cd notification-service && mvn spring-boot:run &
+cd security-service && mvn spring-boot:run &
+cd pos-terminal-service && mvn spring-boot:run &
 ```
 
 ## Service Ports
@@ -160,12 +162,14 @@ cd notification-service && mvn spring-boot:run &
 | API Gateway | 8080 |
 | Merchant Service | 8081 |
 | Acquirer Service | 8082 |
-| Issuer Service | 8083 |
 | Network Service | 8084 |
 | Transaction Service | 8085 |
 | Settlement Service | 8086 |
 | Reporting Service | 8087 |
 | Notification Service | 8088 |
+| Security Service | 8089 |
+| POS Terminal Service | 8091 |
+| Issuer Service | 8092 |
 
 ## API Documentation
 

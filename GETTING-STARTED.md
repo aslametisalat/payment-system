@@ -92,7 +92,7 @@ curl -X POST http://localhost:8080/api/cards \
 ### Step 4: Get Card Details
 To get the actual card number and CVV (needed for testing):
 
-1. Open H2 Console: http://localhost:8083/h2-console
+1. Open H2 Console: http://localhost:8092/h2-console
 2. JDBC URL: `jdbc:h2:mem:issuerdb`
 3. Username: `sa`
 4. Password: (leave blank)
@@ -166,7 +166,7 @@ Each service has its own database:
 | Service | URL | JDBC URL |
 |---------|-----|----------|
 | Merchant | http://localhost:8081/h2-console | jdbc:h2:mem:merchantdb |
-| Issuer | http://localhost:8083/h2-console | jdbc:h2:mem:issuerdb |
+| Issuer | http://localhost:8092/h2-console | jdbc:h2:mem:issuerdb |
 | Transaction | http://localhost:8085/h2-console | jdbc:h2:mem:transactiondb |
 | Settlement | http://localhost:8086/h2-console | jdbc:h2:mem:settlementdb |
 
@@ -174,7 +174,7 @@ All use: Username: `sa`, Password: (blank)
 
 ### Swagger API Documentation
 - Merchant Service: http://localhost:8081/swagger-ui.html
-- Issuer Service: http://localhost:8083/swagger-ui.html
+- Issuer Service: http://localhost:8092/swagger-ui.html
 - Transaction Service: http://localhost:8085/swagger-ui.html
 
 ### View Logs
@@ -291,7 +291,7 @@ ab -n 100 -c 10 -p transaction.json -T application/json \
 ### Services Won't Start
 ```bash
 # Check if ports are in use
-netstat -tlnp | grep -E ':(8080|8081|8082|8083|8084|8085|8086|8087|8088|8761|8888)'
+netstat -tlnp | grep -E ':(8080|8081|8082|8084|8085|8086|8087|8088|8089|8091|8092|8761|8888)'
 
 # Kill processes on specific port if needed
 kill -9 $(lsof -ti:8080)
