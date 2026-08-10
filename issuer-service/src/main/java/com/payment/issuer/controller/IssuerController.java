@@ -124,7 +124,7 @@ public class IssuerController {
     @Operation(summary = "Unblock card")
     public ResponseEntity<Void> unblockCard(@PathVariable String id) {
         log.info("Unblocking card: {}", id);
-        // cardService.unblockCard(id); // Method not implemented
+        cardService.unblockCard(id);
         return ResponseEntity.ok().build();
     }
     

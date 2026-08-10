@@ -12,6 +12,9 @@ import java.time.LocalDate;
 public class CardResponse {
     private String id;
     private String cardNumber;
+    // Only populated in the response to the card-issuance call, so a demo/test
+    // client can capture it once. Never returned by lookup endpoints (PCI-style handling).
+    private String cvv;
     private String cardholderName;
     private LocalDate expiryDate;
     private CardType cardType;

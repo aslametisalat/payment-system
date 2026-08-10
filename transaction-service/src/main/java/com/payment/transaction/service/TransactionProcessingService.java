@@ -75,6 +75,29 @@ public class TransactionProcessingService {
         return toResponse(transaction);
     }
     
+    @Transactional
+    public TransactionResponse refundTransaction(String id) {
+        Transaction transaction = transactionRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("Transaction not found: " + id));
+
+        boolean refundable = transaction.getStatus() == TransactionStatus.AUTHORIZED
+                || transaction.getStatus() == TransactionStatus.CAPTURED
+                || transaction.getStatus() == TransactionStatus.SETTLED;
+
+        if (!refundable) {
+            throw new IllegalStateException(
+                "Only authorized, captured or settled transactions can be refunded (current status: "
+                    + transaction.getStatus() + ")");
+        }
+
+        transaction.setStatus(TransactionStatus.REFUNDED);
+        transaction.setResponseMessage("Refunded");
+        transaction = transactionRepository.save(transaction);
+        log.info("Transaction refunded: {}", transaction.getId());
+
+        return toResponse(transaction);
+    }
+
     public TransactionResponse getTransaction(String id) {
         Transaction transaction = transactionRepository.findById(id)
             .orElseThrow(() -> new RuntimeException("Transaction not found: " + id));

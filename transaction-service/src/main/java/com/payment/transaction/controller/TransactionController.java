@@ -86,11 +86,15 @@ public class TransactionController {
      */
     @PostMapping("/{id}/refund")
     @Operation(summary = "Refund transaction")
-    public ResponseEntity<Void> refundTransaction(@PathVariable String id) {
+    public ResponseEntity<TransactionResponse> refundTransaction(@PathVariable String id) {
         log.info("Processing refund for transaction: {}", id);
-        // TransactionResponse response = transactionService.refundTransaction(id);
-        // return ResponseEntity.ok(response);
-        return ResponseEntity.ok().build(); // Method not implemented
+        try {
+            TransactionResponse response = transactionService.refundTransaction(id);
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException e) {
+            log.warn("Refund rejected: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        }
     }
     
     @GetMapping("/health")

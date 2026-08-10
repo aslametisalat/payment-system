@@ -8,10 +8,12 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/settlements")
@@ -32,9 +34,8 @@ public class SettlementController {
             @PathVariable String merchantId) {
         
         log.info("Fetching settlements for merchant: {}", merchantId);
-        // List<SettlementResponse> settlements = settlementService.getMerchantSettlements(merchantId);
-        // return ResponseEntity.ok(settlements);
-        return ResponseEntity.ok(List.of()); // Method not implemented
+        List<SettlementResponse> settlements = settlementService.getMerchantSettlements(merchantId);
+        return ResponseEntity.ok(settlements);
     }
     
     /**
@@ -43,9 +44,8 @@ public class SettlementController {
     @GetMapping("/{id}")
     @Operation(summary = "Get settlement by ID")
     public ResponseEntity<SettlementResponse> getSettlementById(@PathVariable String id) {
-        // SettlementResponse settlement = settlementService.getSettlementById(id);
-        // return ResponseEntity.ok(settlement);
-        return ResponseEntity.notFound().build(); // Method not implemented
+        Optional<SettlementResponse> settlement = settlementService.getSettlementById(id);
+        return settlement.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
     }
     
     /**
@@ -54,9 +54,7 @@ public class SettlementController {
     @GetMapping
     @Operation(summary = "Get all settlements")
     public ResponseEntity<List<SettlementResponse>> getAllSettlements() {
-        // List<SettlementResponse> settlements = settlementService.getAllSettlements();
-        // return ResponseEntity.ok(settlements);
-        return ResponseEntity.ok(List.of()); // Method not implemented
+        return ResponseEntity.ok(settlementService.getAllSettlements());
     }
     
     /**
@@ -80,13 +78,17 @@ public class SettlementController {
     @PostMapping("/create")
     @Operation(summary = "Create settlement", 
                description = "Create settlement for specific merchant and date")
-    public ResponseEntity<Void> createSettlement(
+    public ResponseEntity<SettlementResponse> createSettlement(
             @Valid @RequestBody SettlementRequest request) {
-        
+
         log.info("Creating settlement for merchant: {}", request.getMerchantId());
-        // SettlementResponse response = settlementService.createSettlement(request);
-        // return ResponseEntity.ok(response);
-        return ResponseEntity.ok().build(); // Method not implemented
+        try {
+            SettlementResponse response = settlementService.createSettlement(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException e) {
+            log.warn("Settlement creation rejected: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).build();
+        }
     }
     
     @GetMapping("/health")

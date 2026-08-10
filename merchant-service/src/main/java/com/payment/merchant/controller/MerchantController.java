@@ -6,7 +6,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +15,7 @@ import com.payment.merchant.dto.MerchantRequest;
 import com.payment.merchant.dto.MerchantResponse;
 import com.payment.merchant.service.MerchantService;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
@@ -23,10 +23,9 @@ import java.util.List;
 @RequiredArgsConstructor
 @Tag(name = "Merchant Management", description = "APIs for merchant operations")
 public class MerchantController {
-	
-	@Autowired
-    MerchantService merchantService;
-    
+
+    private final MerchantService merchantService;
+
     @PostMapping
     @Operation(summary = "Create new merchant")
     public ResponseEntity<MerchantResponse> createMerchant(@Valid @RequestBody MerchantRequest request) {
@@ -52,5 +51,14 @@ public class MerchantController {
             @PathVariable String id,
             @RequestParam MerchantStatus status) {
         return ResponseEntity.ok(merchantService.updateMerchantStatus(id, status));
+    }
+
+    @PostMapping("/{id}/validate")
+    @Operation(summary = "Validate merchant for a transaction",
+               description = "Checks merchant status and daily/monthly volume limits before authorizing a transaction")
+    public ResponseEntity<MerchantService.ValidationResult> validateForTransaction(
+            @PathVariable String id,
+            @RequestParam BigDecimal amount) {
+        return ResponseEntity.ok(merchantService.validateForTransaction(id, amount));
     }
 }

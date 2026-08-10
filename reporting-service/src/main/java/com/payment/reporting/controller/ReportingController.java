@@ -47,10 +47,7 @@ public class ReportingController {
         }
         log.info("╚═══════════════════════════════════════════════╝");
         
-        // TransactionReport report = reportingService.generateTransactionReport(
-        //     merchantId, startDate, endDate
-        // );
-        TransactionReport report = reportingService.generateTransactionReport(merchantId);
+        TransactionReport report = reportingService.generateTransactionReport(merchantId, startDate, endDate);
         
         log.info("Report generated:");
         log.info("  Total Transactions: {}", report.getTotalTransactions());
@@ -70,9 +67,8 @@ public class ReportingController {
             @PathVariable String merchantId) {
         
         log.info("Generating dashboard for merchant: {}", merchantId);
-        // MerchantDashboard dashboard = reportingService.getMerchantDashboard(merchantId);
-        // return ResponseEntity.ok(dashboard);
-        return ResponseEntity.notFound().build(); // Method not implemented
+        MerchantDashboard dashboard = reportingService.getMerchantDashboard(merchantId);
+        return ResponseEntity.ok(dashboard);
     }
     
     /**
@@ -85,7 +81,7 @@ public class ReportingController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
         
         log.info("Getting daily summary for {} on {}", merchantId, date);
-        TransactionReport report = reportingService.generateTransactionReport(merchantId);
+        TransactionReport report = reportingService.generateTransactionReport(merchantId, date, date);
         return ResponseEntity.ok(report);
     }
     
@@ -103,7 +99,7 @@ public class ReportingController {
         LocalDate endDate = startDate.plusMonths(1).minusDays(1);
         
         log.info("Getting monthly summary for {}: {}/{}", merchantId, month, year);
-        TransactionReport report = reportingService.generateTransactionReport(merchantId);
+        TransactionReport report = reportingService.generateTransactionReport(merchantId, startDate, endDate);
         return ResponseEntity.ok(report);
     }
     

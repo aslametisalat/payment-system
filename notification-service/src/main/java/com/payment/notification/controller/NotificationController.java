@@ -107,9 +107,8 @@ public class NotificationController {
             @PathVariable String recipient) {
         
         log.info("Fetching notification history for: {}", recipient);
-        // List<NotificationResponse> history = notificationService.getNotificationHistory(recipient);
-        // return ResponseEntity.ok(history);
-        return ResponseEntity.ok(List.of()); // Method not implemented
+        List<NotificationResponse> history = notificationService.getNotificationHistory(recipient);
+        return ResponseEntity.ok(history);
     }
     
     @GetMapping("/health")

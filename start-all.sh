@@ -79,7 +79,7 @@ echo -e "\n${GREEN}[6/13] Starting Issuer Service...${NC}"
 cd issuer-service
 mvn spring-boot:run > ../logs/issuer-service.log 2>&1 &
 cd ..
-wait_for_service "Issuer Service" 8092
+wait_for_service "Issuer Service" 8083
 
 # 7. Start Network Service
 echo -e "\n${GREEN}[7/13] Starting Network Service...${NC}"
@@ -116,14 +116,14 @@ mvn spring-boot:run > ../logs/notification-service.log 2>&1 &
 cd ..
 wait_for_service "Notification Service" 8088
 
-# 12. Start Merchant Service
+# 12. Start Security Service
 echo -e "\n${GREEN}[12/13] Starting security-service...${NC}"
 cd security-service
-mvn spring-boot:run > ../logs/service-registry.log 2>&1 &
+mvn spring-boot:run > ../logs/security-service.log 2>&1 &
 cd ..
 wait_for_service "security-service" 8089
 
-# 13. Start Merchant Service
+# 13. Start POS Terminal Service
 echo -e "\n${GREEN}[13/13] Starting pos-terminal-service...${NC}"
 cd pos-terminal-service
 mvn spring-boot:run > ../logs/pos-terminal-service.log 2>&1 &
@@ -146,6 +146,8 @@ echo "Transaction Service: http://localhost:8085"
 echo "Settlement Service: http://localhost:8086"
 echo "Reporting Service: http://localhost:8087"
 echo "Notification Service: http://localhost:8088"
+echo "Security Service: http://localhost:8089"
+echo "POS Terminal Service: http://localhost:8091"
 
 echo -e "\n${YELLOW}API Documentation:${NC}"
 echo "Swagger UI: http://localhost:8080/swagger-ui.html"

@@ -67,6 +67,10 @@ public class POSTransactionService {
             String encryptedPIN = null;
             if (Boolean.TRUE.equals(request.getRequirePIN())) {
                 log.info("→ Step 2: Processing PIN...");
+                if (request.getPin() == null || request.getPin().isBlank()) {
+                    log.warn("  ✗ PIN required but not provided");
+                    return buildErrorResult("PIN required for this transaction", stan, rrn);
+                }
                 String pinBlock = pinBlockService.formatPINBlock(
                         request.getPin(), 
                         cardData.getPan()
@@ -207,13 +211,20 @@ public class POSTransactionService {
     private ISO8583Message sendToAuthorization(ISO8583Message message) {
         // In real system, this sends to issuer via acquirer
         // For simulation, create a response
-        
+
         AuthorizationResponseData responseData = AuthorizationResponseData.builder()
                 .responseCode("00")
                 .authorizationCode(generateAuthCode())
                 .build();
-        
-        return messageBuilder.buildAuthorizationResponse(message, responseData);
+
+        ISO8583Message response = messageBuilder.buildAuthorizationResponse(message, responseData);
+
+        // Sign the response so the terminal can verify its integrity (Field 64: MAC)
+        String responseMessageString = messageBuilder.messageToString(response);
+        String responseMac = macService.generateMAC(responseMessageString, MAC_KEY);
+        response.setField(64, responseMac);
+
+        return response;
     }
     
     private boolean verifyResponseMAC(ISO8583Message response) {

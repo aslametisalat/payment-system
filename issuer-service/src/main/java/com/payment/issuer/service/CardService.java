@@ -41,9 +41,22 @@ public class CardService {
         card.setCreditLimit(request.getCreditLimit() != null ? request.getCreditLimit() : new BigDecimal("5000"));
         
         Card saved = cardRepository.save(card);
-        log.info("Card issued: {}", saved.getCardNumber());
-        
-        return toResponse(saved);
+        log.info("Card issued: {}", maskCardNumber(saved.getCardNumber()));
+
+        // Full PAN/CVV are only ever returned here, at issuance time, so the
+        // caller has a way to actually use the card. Every other endpoint masks them.
+        return CardResponse.builder()
+            .id(saved.getId())
+            .cardNumber(saved.getCardNumber())
+            .cvv(saved.getCvv())
+            .cardholderName(saved.getCardholderName())
+            .expiryDate(saved.getExpiryDate())
+            .cardType(saved.getCardType())
+            .network(saved.getNetwork())
+            .creditLimit(saved.getCreditLimit())
+            .availableBalance(saved.getAvailableBalance())
+            .active(saved.isActive())
+            .build();
     }
     
     public CardResponse getCard(String id) {
@@ -107,6 +120,15 @@ public class CardService {
         card.setBlocked(true);
         cardRepository.save(card);
         log.info("Card blocked: {}", cardId);
+    }
+
+    @Transactional
+    public void unblockCard(String cardId) {
+        Card card = cardRepository.findById(cardId)
+            .orElseThrow(() -> new RuntimeException("Card not found"));
+        card.setBlocked(false);
+        cardRepository.save(card);
+        log.info("Card unblocked: {}", cardId);
     }
     
     private CardResponse toResponse(Card card) {

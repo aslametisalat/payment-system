@@ -20,20 +20,20 @@ public class AcquirerService {
         // Fraud screening
         int fraudScore = performFraudCheck(cardNumber, amount);
         log.debug("Fraud score: {}", fraudScore);
-        
+
         if (fraudScore > 80) {
             log.warn("High fraud score detected: {}", fraudScore);
-            return AcquiringResult.declined("Suspected fraud");
+            return AcquiringResult.declined("Suspected fraud", fraudScore);
         }
-        
+
         // Velocity check
         if (!checkVelocity(cardNumber)) {
             log.warn("Velocity check failed");
-            return AcquiringResult.declined("Too many transactions");
+            return AcquiringResult.declined("Too many transactions", fraudScore);
         }
-        
+
         log.info("Acquiring checks passed, routing to network");
-        return AcquiringResult.approved();
+        return AcquiringResult.approved(fraudScore);
     }
     
     private int performFraudCheck(String cardNumber, BigDecimal amount) {
@@ -62,13 +62,14 @@ public class AcquirerService {
     public static class AcquiringResult {
         private boolean approved;
         private String message;
-        
-        public static AcquiringResult approved() {
-            return new AcquiringResult(true, "Approved");
+        private int fraudScore;
+
+        public static AcquiringResult approved(int fraudScore) {
+            return new AcquiringResult(true, "Approved", fraudScore);
         }
-        
-        public static AcquiringResult declined(String reason) {
-            return new AcquiringResult(false, reason);
+
+        public static AcquiringResult declined(String reason, int fraudScore) {
+            return new AcquiringResult(false, reason, fraudScore);
         }
     }
 }

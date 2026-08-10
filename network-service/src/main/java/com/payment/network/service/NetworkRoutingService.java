@@ -15,8 +15,7 @@ public class NetworkRoutingService {
      * Determine card network and route to issuer
      */
     public RoutingResult route(String cardNumber, BigDecimal amount) {
-        log.info("Routing transaction for card: ****{}", 
-                cardNumber.substring(cardNumber.length() - 4));
+        log.info("Routing transaction for card: ****{}", maskLast4(cardNumber));
         
         // Determine network from BIN (first 6 digits)
         PaymentNetwork network = determineNetwork(cardNumber);
@@ -38,8 +37,11 @@ public class NetworkRoutingService {
     }
     
     private PaymentNetwork determineNetwork(String cardNumber) {
+        if (cardNumber == null || cardNumber.isEmpty()) {
+            return PaymentNetwork.LOCAL;
+        }
         String firstDigit = cardNumber.substring(0, 1);
-        
+
         switch (firstDigit) {
             case "4":
                 return PaymentNetwork.VISA;
@@ -67,9 +69,19 @@ public class NetworkRoutingService {
     private String lookupIssuer(String cardNumber) {
         // In real system, BIN lookup to database
         // For simulation, return generic issuer
+        if (cardNumber == null || cardNumber.length() < 6) {
+            return "ISSUER-UNKNOWN";
+        }
         return "ISSUER-" + cardNumber.substring(0, 6);
     }
-    
+
+    private String maskLast4(String cardNumber) {
+        if (cardNumber == null || cardNumber.length() < 4) {
+            return "****";
+        }
+        return cardNumber.substring(cardNumber.length() - 4);
+    }
+
     @lombok.Data
     @lombok.Builder
     public static class RoutingResult {

@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 public class RoutingRequest {
     
     @NotBlank(message = "Card number is required")
+    @Pattern(regexp = "\\d{12,19}", message = "Card number must be 12-19 digits")
     private String cardNumber;
     
     @NotNull(message = "Amount is required")

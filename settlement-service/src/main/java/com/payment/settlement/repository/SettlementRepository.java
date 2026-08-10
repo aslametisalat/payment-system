@@ -7,4 +7,5 @@ import java.util.List;
 public interface SettlementRepository extends JpaRepository<Settlement, String> {
     List<Settlement> findByMerchantId(String merchantId);
     List<Settlement> findBySettlementDate(LocalDate date);
+    boolean existsByMerchantIdAndSettlementDate(String merchantId, LocalDate settlementDate);
 }

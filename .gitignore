@@ -1,0 +1,22 @@
+# Compiled output
+target/
+build/
+*.class
+*.jar
+*.war
+
+# IDE files
+.idea/
+.eclipse/
+*.iml
+.settings/
+.classpath
+.project
+
+# Secrets & config
+application-local.properties
+*.env
+
+# Logs
+*.log
+logs/

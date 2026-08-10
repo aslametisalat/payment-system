@@ -37,7 +37,7 @@ spring:
         - id: network-service
           uri: lb://network-service
           predicates:
-            - Path=/api/networks/**
+            - Path=/api/network/**
         - id: transaction-service
           uri: lb://transaction-service
           predicates:
@@ -58,6 +58,10 @@ spring:
           uri: lb://pos-terminal-service
           predicates:
             - Path=/api/pos/**
+        - id: terminal-endpoints
+          uri: lb://merchant-service
+          predicates:
+            - Path=/api/terminals/**
         # API Docs routes
         - id: merchant-service-docs
           uri: lb://merchant-service

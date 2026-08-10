@@ -48,6 +48,7 @@ public class AcquirerController {
             .approved(result.isApproved())
             .message(result.getMessage())
             .acquirerId("ACQ-123456")
+            .fraudScore(result.getFraudScore())
             .build();
         
         log.info("Acquirer Result: {}", result.isApproved() ? "✓ APPROVED" : "✗ DECLINED");
