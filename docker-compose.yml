@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   service-registry:
     build:
-      context: ./service-registry
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: service-registry/Dockerfile
     container_name: service-registry
     ports:
       - "8761:8761"
@@ -18,8 +16,8 @@ services:
 
   config-server:
     build:
-      context: ./config-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: config-server/Dockerfile
     container_name: config-server
     ports:
       - "8888:8888"
@@ -32,8 +30,8 @@ services:
 
   api-gateway:
     build:
-      context: ./api-gateway
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api-gateway/Dockerfile
     container_name: api-gateway
     ports:
       - "8080:8080"
@@ -47,8 +45,8 @@ services:
 
   merchant-service:
     build:
-      context: ./merchant-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: merchant-service/Dockerfile
     container_name: merchant-service
     ports:
       - "8081:8081"
@@ -62,8 +60,8 @@ services:
 
   acquirer-service:
     build:
-      context: ./acquirer-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: acquirer-service/Dockerfile
     container_name: acquirer-service
     ports:
       - "8082:8082"
@@ -74,13 +72,27 @@ services:
     networks:
       - payment-network
 
+  security-service:
+    build:
+      context: .
+      dockerfile: security-service/Dockerfile
+    container_name: security-service
+    ports:
+      - "8089:8089"
+    depends_on:
+      - service-registry
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/
+    networks:
+      - payment-network
+
   issuer-service:
     build:
-      context: ./issuer-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: issuer-service/Dockerfile
     container_name: issuer-service
     ports:
-      - "8083:8083"
+      - "8092:8092"
     depends_on:
       - service-registry
     environment:
@@ -90,8 +102,8 @@ services:
 
   network-service:
     build:
-      context: ./network-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: network-service/Dockerfile
     container_name: network-service
     ports:
       - "8084:8084"
@@ -104,8 +116,8 @@ services:
 
   transaction-service:
     build:
-      context: ./transaction-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: transaction-service/Dockerfile
     container_name: transaction-service
     ports:
       - "8085:8085"
@@ -119,8 +131,8 @@ services:
 
   settlement-service:
     build:
-      context: ./settlement-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: settlement-service/Dockerfile
     container_name: settlement-service
     ports:
       - "8086:8086"
@@ -133,8 +145,8 @@ services:
 
   reporting-service:
     build:
-      context: ./reporting-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: reporting-service/Dockerfile
     container_name: reporting-service
     ports:
       - "8087:8087"
@@ -147,11 +159,25 @@ services:
 
   notification-service:
     build:
-      context: ./notification-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: notification-service/Dockerfile
     container_name: notification-service
     ports:
       - "8088:8088"
+    depends_on:
+      - service-registry
+    environment:
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/
+    networks:
+      - payment-network
+
+  pos-terminal-service:
+    build:
+      context: .
+      dockerfile: pos-terminal-service/Dockerfile
+    container_name: pos-terminal-service
+    ports:
+      - "8091:8091"
     depends_on:
       - service-registry
     environment:

@@ -34,7 +34,7 @@ This is a complete Point of Sale (POS) payment processing system built using mic
 ┌──────────────────┐  ┌──────────────┐  ┌────────────────┐  ┌──────────────┐
 │ MERCHANT SERVICE │  │  ACQUIRER    │  │    ISSUER      │  │   NETWORK    │
 │     (8081)       │  │  SERVICE     │  │   SERVICE      │  │   SERVICE    │
-│                  │  │   (8082)     │  │    (8083)      │  │   (8084)     │
+│                  │  │   (8082)     │  │    (8092)      │  │   (8084)     │
 │ • Registration   │  │              │  │                │  │              │
 │ • KYC/Onboarding │  │ • Merchant   │  │ • Card Issue   │  │ • Routing    │
 │ • Terminal Mgmt  │  │   Banking    │  │ • Authorization│  │ • Network    │
