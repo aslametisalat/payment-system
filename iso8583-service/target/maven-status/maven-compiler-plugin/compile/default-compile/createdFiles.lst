@@ -1,6 +1,0 @@
-com\payment\iso8583\dto\AuthorizationResponseData.class
-com\payment\iso8583\dto\AuthorizationRequestData$AuthorizationRequestDataBuilder.class
-com\payment\iso8583\dto\AuthorizationRequestData.class
-com\payment\iso8583\service\ISO8583MessageBuilder.class
-com\payment\iso8583\model\ISO8583Message.class
-com\payment\iso8583\dto\AuthorizationResponseData$AuthorizationResponseDataBuilder.class
