@@ -1,9 +1,17 @@
 package com.payment.transaction.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.payment.common.enums.PaymentNetwork;
+import com.payment.transaction.client.AcquirerClient;
 import com.payment.transaction.client.IssuerClient;
+import com.payment.transaction.client.MerchantClient;
+import com.payment.transaction.client.NetworkClient;
+import com.payment.transaction.dto.AcquirerResponse;
 import com.payment.transaction.dto.AuthorizationResponse;
+import com.payment.transaction.dto.MerchantValidationResult;
+import com.payment.transaction.dto.RoutingResponse;
 import com.payment.transaction.dto.TransactionRequest;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -22,19 +30,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * End-to-end test of a single hop in the payment flow diagram:
+ * End-to-end test of the full authorization chain from the flow diagram:
  *
  *   HTTP POST /api/transactions/authorize
  *     -> TransactionController
  *     -> TransactionProcessingService (real bean)
  *     -> TransactionRepository (real H2 database, created fresh per run)
- *     -> IssuerClient (mocked - stands in for the network hop to
- *        issuer-service, which isn't running during this test)
+ *     -> MerchantClient -> AcquirerClient -> NetworkClient -> IssuerClient
+ *        (all four mocked - stand in for merchant-service, acquirer-service,
+ *        network-service and issuer-service, none of which are running
+ *        during this test)
  *
  * This is the closest thing to "watching a transaction happen in real time"
- * without needing all twelve services and Eureka/Config Server up: it drives
- * a real HTTP request through the real controller/service/repository stack
- * and only replaces the one call that would otherwise leave the JVM.
+ * without needing all thirteen services and Eureka/Config Server up: it
+ * drives a real HTTP request through the real controller/service/repository
+ * stack and only replaces the network calls that would otherwise leave
+ * the JVM.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -47,7 +58,33 @@ class TransactionAuthorizationIntegrationTest {
     private ObjectMapper objectMapper;
 
     @MockBean
+    private MerchantClient merchantClient;
+
+    @MockBean
+    private AcquirerClient acquirerClient;
+
+    @MockBean
+    private NetworkClient networkClient;
+
+    @MockBean
     private IssuerClient issuerClient;
+
+    @BeforeEach
+    void stubTheUpstreamHopsAsHealthy() {
+        MerchantValidationResult validMerchant = new MerchantValidationResult();
+        validMerchant.setValid(true);
+        when(merchantClient.validateForTransaction(any(), any())).thenReturn(validMerchant);
+
+        AcquirerResponse acquirerApproved = new AcquirerResponse();
+        acquirerApproved.setApproved(true);
+        acquirerApproved.setAcquirerId("ACQ-123456");
+        when(acquirerClient.processAcquiring(any())).thenReturn(acquirerApproved);
+
+        RoutingResponse routing = new RoutingResponse();
+        routing.setNetwork(PaymentNetwork.VISA);
+        routing.setIssuerId("ISSUER-411111");
+        when(networkClient.route(any())).thenReturn(routing);
+    }
 
     private TransactionRequest purchaseRequest() {
         TransactionRequest request = new TransactionRequest();
@@ -62,7 +99,7 @@ class TransactionAuthorizationIntegrationTest {
     }
 
     @Test
-    void authorize_persistsAndReturnsAnAuthorizedTransactionWhenTheIssuerApproves() throws Exception {
+    void authorize_persistsAndReturnsAnAuthorizedTransactionWhenEveryHopApproves() throws Exception {
         AuthorizationResponse approved = new AuthorizationResponse();
         approved.setApproved(true);
         approved.setAuthorizationCode("654321");
@@ -92,7 +129,26 @@ class TransactionAuthorizationIntegrationTest {
     }
 
     @Test
-    void authorize_returnsBadRequestAndDeclinedStatusWhenTheIssuerDeclines() throws Exception {
+    void authorize_returnsOkWithDeclinedStatusWhenTheMerchantIsRejected() throws Exception {
+        // A decline is a legitimate business outcome for a well-formed
+        // request, not a client error - it comes back as 200 so callers
+        // like the POS terminal (a real Feign client) can read the decline
+        // reason instead of Feign throwing on a non-2xx response.
+        MerchantValidationResult invalid = new MerchantValidationResult();
+        invalid.setValid(false);
+        invalid.setMessage("Daily limit exceeded");
+        when(merchantClient.validateForTransaction(any(), any())).thenReturn(invalid);
+
+        mockMvc.perform(post("/api/transactions/authorize")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(purchaseRequest())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DECLINED"))
+                .andExpect(jsonPath("$.responseMessage").value("Daily limit exceeded"));
+    }
+
+    @Test
+    void authorize_returnsOkWithDeclinedStatusWhenTheIssuerDeclines() throws Exception {
         AuthorizationResponse declined = new AuthorizationResponse();
         declined.setApproved(false);
         declined.setResponseCode("51");
@@ -102,7 +158,7 @@ class TransactionAuthorizationIntegrationTest {
         mockMvc.perform(post("/api/transactions/authorize")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(purchaseRequest())))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DECLINED"))
                 .andExpect(jsonPath("$.responseMessage").value("Insufficient funds"));
     }

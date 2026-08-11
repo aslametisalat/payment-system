@@ -42,12 +42,14 @@ public class TransactionController {
         log.info("╚═══════════════════════════════════════════════╝");
         
         TransactionResponse response = transactionService.processTransaction(request);
-        
-        HttpStatus status = response.getStatus() != null && 
-            response.getStatus().toString().contains("AUTHORIZED") 
-            ? HttpStatus.OK : HttpStatus.BAD_REQUEST;
-        
-        return ResponseEntity.status(status).body(response);
+
+        // A decline (fraud, insufficient funds, limit exceeded, ...) is a
+        // legitimate business outcome for a well-formed request, not a
+        // client error - it comes back as 200 with status: DECLINED in the
+        // body, same as real payment APIs model it. Callers like the POS
+        // terminal need to be able to read the decline reason; a non-2xx
+        // response here would make Feign throw instead of returning it.
+        return ResponseEntity.ok(response);
     }
     
     /**

@@ -92,7 +92,7 @@ services:
       dockerfile: issuer-service/Dockerfile
     container_name: issuer-service
     ports:
-      - "8092:8092"
+      - "8083:8083"
     depends_on:
       - service-registry
     environment:
