@@ -155,6 +155,22 @@ instance for the service ...`.
 
 ### Driving a transaction through it
 
+The easy way: once the six services above are up (and Eureka has had ~30-40s
+to propagate them to each other), run:
+
+```bash
+./test-e2e.sh
+```
+
+It creates a merchant, activates it, issues a card, then fires two POS
+transactions through the whole chain — one that should be `APPROVED`
+($25.99) and one that should be `DECLINED` for exceeding the merchant's
+daily limit ($9,999) — and reports pass/fail for each step. It's safe to
+run repeatedly (each run uses a fresh merchant). It doesn't start any
+services itself; if something's down it tells you which one.
+
+What it's actually doing, if you want to run it by hand or adapt it:
+
 ```bash
 # 1. Create + activate a merchant
 MERCHANT_ID=$(curl -s -X POST http://localhost:8081/api/merchants \
