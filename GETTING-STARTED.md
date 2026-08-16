@@ -248,20 +248,26 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 
 ### Using Postman
 
-1. Import the API endpoints:
-   - Create a new Postman collection
-   - Set base URL variable: `{{base_url}}` = `http://localhost:8080`
-   
-2. Create environment variables:
-   ```
-   merchant_id = (from create merchant response)
-   card_id = (from create card response)
-   card_number = (from H2 console)
-   cvv = (from H2 console)
-   ```
+Import `postman-collection.json` (repo root) into Postman. It's organized
+so you can call each controller directly, not just through the full flow:
 
-3. Test the complete flow:
-   - Create Merchant → Activate → Issue Card → Process Transaction
+1. **1. Setup** - create + activate a merchant, issue a card. Run these
+   three first; their test scripts capture `merchantId`/`cardNumber`/`cvv`
+   into collection variables automatically, for every other request to use.
+2. **2. Call Each Controller Directly** - Merchant's limit check, Acquirer's
+   fraud screening, Network's BIN routing, Issuer's authorize/block/unblock
+   - the same four hops `transaction-service` calls internally, but one at a
+   time so you can see exactly what each one does on its own.
+3. **3. Full Orchestrated Flow** - the real `/api/transactions/authorize`
+   entry point (approved and declined examples), plus get/refund.
+4. **4. POS Terminal** - the simulated card terminal, chip+PIN and
+   magnetic-stripe, feeding into the same orchestrated flow over real HTTP.
+
+Every request has a description explaining what it's testing and what to
+try changing. Swagger UI is also available per service once it's running,
+at `http://localhost:{port}/swagger-ui.html` (e.g. `:8082` for
+acquirer-service) - useful for browsing a single service's schema without
+the full collection.
 
 ### Load Testing
 

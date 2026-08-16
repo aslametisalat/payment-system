@@ -155,8 +155,19 @@ instance for the service ...`.
 
 ### Driving a transaction through it
 
-The easy way: once the six services above are up (and Eureka has had ~30-40s
-to propagate them to each other), run:
+**To explore by hand, one controller at a time:** import
+`postman-collection.json` into Postman. Unlike the automated script below,
+it doesn't just call the orchestrated entry point - Folder 2 calls
+Merchant's limit check, Acquirer's fraud screening, Network's BIN routing,
+and Issuer's authorize/block/unblock directly, so you can see what each hop
+does on its own before Folder 3 shows the same four things happening
+automatically through `/api/transactions/authorize`. Every request has a
+description explaining what it's for. See GETTING-STARTED.md's "Using
+Postman" section for the folder-by-folder breakdown.
+
+**To just confirm it all works, non-interactively:** once the six services
+above are up (and Eureka has had ~30-40s to propagate them to each other),
+run:
 
 ```bash
 ./test-e2e.sh
