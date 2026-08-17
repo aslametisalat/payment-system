@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -20,4 +21,6 @@ public class TransactionResponse {
     private String responseCode;
     private String responseMessage;
     private LocalDateTime createdAt;
+    // The hop-by-hop trail this transaction took - see TransactionStepDto.
+    private List<TransactionStepDto> steps;
 }

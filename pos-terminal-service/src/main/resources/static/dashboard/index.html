@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment System Dashboard</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --border: #dde3ea;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --green: #16a34a;
+    --green-bg: #ecfdf3;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --gray-bg: #f3f4f6;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: #111827;
+    color: #fff;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .subtitle { color: #9ca3af; font-size: 12px; margin-top: 2px; }
+  #serviceStatus { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+  .svc-dot { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: #1f2937; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; }
+  .dot.up { background: var(--green); }
+  .dot.down { background: var(--red); }
+
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; display: grid; gap: 20px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, select {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 12px; }
+  .checkbox-row input { width: auto; }
+  .checkbox-row label { margin: 0; }
+
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    background: var(--accent);
+    color: #fff;
+  }
+  button.secondary { background: #e5e7eb; color: var(--text); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+  .id-pill {
+    display: inline-block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    background: var(--gray-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .store-list { margin-top: 12px; font-size: 12px; }
+  .store-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); gap: 8px; }
+  .store-item:first-child { border-top: none; }
+  .store-item .meta { color: var(--muted); }
+
+  .status-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .status-AUTHORIZED, .status-APPROVED { background: var(--green-bg); color: var(--green); }
+  .status-DECLINED { background: var(--red-bg); color: var(--red); }
+  .status-FAILED, .status-ERROR { background: var(--red-bg); color: var(--red); }
+  .status-PENDING, .status-INITIATED { background: var(--amber-bg); color: var(--amber); }
+  .status-SUCCESS { background: var(--green-bg); color: var(--green); }
+
+  #resultPanel { min-height: 40px; }
+  .result-empty { color: var(--muted); font-size: 13px; }
+  .result-headline { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .result-headline .msg { font-size: 14px; font-weight: 600; }
+  .result-meta { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+  .trace { display: flex; flex-direction: column; gap: 6px; }
+  .trace-step {
+    display: grid;
+    grid-template-columns: 20px 160px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    background: var(--gray-bg);
+  }
+  .trace-step.SUCCESS { background: var(--green-bg); }
+  .trace-step.DECLINED { background: var(--red-bg); }
+  .trace-step.FAILED { background: var(--red-bg); }
+  .trace-marker { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; }
+  .trace-step.SUCCESS .trace-marker { background: var(--green); }
+  .trace-step.DECLINED .trace-marker, .trace-step.FAILED .trace-marker { background: var(--red); }
+  .trace-target { color: var(--muted); font-family: ui-monospace, monospace; }
+  .trace-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trace-duration { color: var(--muted); font-family: ui-monospace, monospace; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--gray-bg); }
+  .txn-trace-row td { cursor: default; background: #fafbfc; }
+  .txn-trace-row:hover { background: #fafbfc; }
+
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+  .stat-row { display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+  .stat-row b { color: var(--text); font-size: 14px; }
+  .empty-state { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
+
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+  code { background: var(--gray-bg); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Payment System Dashboard</h1>
+    <div class="subtitle">POS &rarr; Transaction &rarr; Merchant &rarr; Acquirer &rarr; Network &rarr; Issuer, live</div>
+  </div>
+  <div id="serviceStatus"></div>
+</header>
+
+<main>
+
+  <div class="row">
+    <div class="card">
+      <h2>1. Create + activate a merchant</h2>
+      <p class="hint">Calls merchant-service directly: <code>POST /api/merchants</code> then <code>PUT /{id}/status?status=ACTIVE</code>.</p>
+      <div class="grid2">
+        <div><label>Business name</label><input id="m-name" value="Coffee Shop"></div>
+        <div><label>Email</label><input id="m-email"></div>
+        <div><label>Phone</label><input id="m-phone" value="+12025550123"></div>
+        <div><label>Tax ID</label><input id="m-tax"></div>
+        <div><label>MCC</label><input id="m-mcc" value="5814"></div>
+        <div><label>Address</label><input id="m-address" value="123 Main St"></div>
+        <div><label>Daily limit ($)</label><input id="m-daily" type="number" value="10000"></div>
+        <div><label>Monthly limit ($)</label><input id="m-monthly" type="number" value="300000"></div>
+      </div>
+      <div class="actions">
+        <button onclick="createMerchant()">Create + activate merchant</button>
+      </div>
+      <div id="merchantList" class="store-list"></div>
+    </div>
+
+    <div class="card">
+      <h2>2. Issue a card</h2>
+      <p class="hint">Calls issuer-service directly: <code>POST /api/cards</code>. Card number/CVV are only ever returned here, at issuance.</p>
+      <div class="grid2">
+        <div><label>Cardholder name</label><input id="c-name" value="John Doe"></div>
+        <div><label>Card type</label>
+          <select id="c-type"><option value="CREDIT">CREDIT</option><option value="DEBIT">DEBIT</option></select>
+        </div>
+        <div><label>Network</label>
+          <select id="c-network">
+            <option value="VISA">VISA</option>
+            <option value="MASTERCARD">MASTERCARD</option>
+            <option value="AMEX">AMEX</option>
+            <option value="DISCOVER">DISCOVER</option>
+          </select>
+        </div>
+        <div><label>Credit limit ($)</label><input id="c-limit" type="number" value="5000"></div>
+      </div>
+      <div class="actions">
+        <button onclick="issueCard()">Issue card</button>
+      </div>
+      <div id="cardList" class="store-list"></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>3. Run a transaction through the whole chain</h2>
+      <p class="hint">Calls pos-terminal-service: <code>POST /api/pos/transaction</code>, which calls transaction-service, which calls merchant &rarr; acquirer &rarr; network &rarr; issuer.</p>
+      <div class="grid2">
+        <div><label>Merchant</label><select id="t-merchant"></select></div>
+        <div><label>Card</label><select id="t-card"></select></div>
+        <div><label>Terminal ID</label><input id="t-terminal" value="TERM0001"></div>
+        <div><label>Amount ($)</label><input id="t-amount" type="number" step="0.01" value="25.99"></div>
+        <div><label>Card read method</label>
+          <select id="t-method">
+            <option value="CHIP">CHIP</option>
+            <option value="MAGNETIC_STRIPE">MAGNETIC_STRIPE</option>
+            <option value="CONTACTLESS">CONTACTLESS</option>
+          </select>
+        </div>
+        <div><label>Expiry (YYMM)</label><input id="t-expiry" value="2812"></div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="t-pin-required" checked onchange="document.getElementById('t-pin').disabled = !this.checked">
+        <label for="t-pin-required">Require PIN</label>
+        <input id="t-pin" value="1234" style="width:80px; margin-left:10px;">
+      </div>
+      <div class="actions">
+        <button onclick="submitTransaction()" id="submitBtn">Submit transaction</button>
+        <button class="secondary" onclick="prefillDecline()">Prefill a declining amount ($9,999)</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Result &amp; step trace</h2>
+      <p class="hint">Exactly what each service returned, in order, for the transaction above.</p>
+      <div id="resultPanel"><p class="result-empty">Submit a transaction to see it move through the system.</p></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <div>
+        <h2 style="margin-bottom:2px;">All transactions</h2>
+        <p class="hint" style="margin:0;">Polls transaction-service every 4s. Click a row to see its step trace.</p>
+      </div>
+      <div class="stat-row">
+        <span>Authorized: <b id="stat-auth">0</b></span>
+        <span>Declined: <b id="stat-decl">0</b></span>
+        <span>Failed: <b id="stat-fail">0</b></span>
+        <button class="secondary" onclick="loadTransactions()">Refresh now</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Merchant</th><th>Amount</th><th>Status</th><th>Response</th><th>Steps</th></tr>
+      </thead>
+      <tbody id="txnTableBody"></tbody>
+    </table>
+    <div id="txnEmpty" class="empty-state" style="display:none;">No transactions yet - submit one above.</div>
+  </div>
+
+</main>
+
+<footer>
+  merchant-service :8081 &middot; acquirer-service :8082 &middot; issuer-service :8083 &middot; network-service :8084 &middot; transaction-service :8085 &middot; pos-terminal-service :8091
+</footer>
+
+<script>
+const SVC = {
+  merchant: 'http://localhost:8081',
+  acquirer: 'http://localhost:8082',
+  issuer: 'http://localhost:8083',
+  network: 'http://localhost:8084',
+  transaction: 'http://localhost:8085',
+  pos: '' // same origin - this page is served by pos-terminal-service
+};
+
+let merchants = JSON.parse(localStorage.getItem('dash-merchants') || '[]');
+let cards = JSON.parse(localStorage.getItem('dash-cards') || '[]');
+
+function save() {
+  localStorage.setItem('dash-merchants', JSON.stringify(merchants));
+  localStorage.setItem('dash-cards', JSON.stringify(cards));
+}
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ---------- service health dots ----------
+async function checkServices() {
+  const targets = [
+    ['merchant', SVC.merchant + '/api/merchants'],
+    ['acquirer', SVC.acquirer + '/api/acquirers/health'],
+    ['issuer', SVC.issuer + '/api/cards/health'],
+    ['network', SVC.network + '/api/network/health'],
+    ['transaction', SVC.transaction + '/api/transactions/health'],
+    ['pos', '/api/pos/health'],
+  ];
+  const el = document.getElementById('serviceStatus');
+  el.innerHTML = targets.map(([name]) => `<span class="svc-dot" id="dot-${name}"><span class="dot" id="dotmark-${name}"></span>${name}</span>`).join('');
+  for (const [name, url] of targets) {
+    fetch(url).then(r => {
+      document.getElementById(`dotmark-${name}`).className = 'dot ' + (r.ok ? 'up' : 'down');
+    }).catch(() => {
+      document.getElementById(`dotmark-${name}`).className = 'dot down';
+    });
+  }
+}
+
+// ---------- setup: merchant ----------
+document.getElementById('m-email').value = `shop+${Date.now()}@coffee.com`;
+document.getElementById('m-tax').value = `12-3456789-${Date.now()}`;
+
+async function createMerchant() {
+  const body = {
+    businessName: val('m-name'),
+    email: val('m-email'),
+    phone: val('m-phone'),
+    address: val('m-address'),
+    taxId: val('m-tax'),
+    merchantCategoryCode: val('m-mcc'),
+    dailyLimit: Number(val('m-daily')),
+    monthlyLimit: Number(val('m-monthly')),
+  };
+  try {
+    const created = await postJson(SVC.merchant + '/api/merchants', body);
+    await fetch(`${SVC.merchant}/api/merchants/${created.id}/status?status=ACTIVE`, { method: 'PUT' });
+    merchants.unshift({ id: created.id, name: created.businessName });
+    save();
+    renderMerchants();
+    document.getElementById('m-email').value = `shop+${Date.now()}@coffee.com`;
+    document.getElementById('m-tax').value = `12-3456789-${Date.now()}`;
+  } catch (e) {
+    alert('Merchant creation failed: ' + e.message);
+  }
+}
+
+function renderMerchants() {
+  const list = document.getElementById('merchantList');
+  list.innerHTML = merchants.length
+    ? merchants.map(m => `<div class="store-item"><span>${m.name}</span><span class="id-pill" onclick="copyText('${m.id}')" title="Click to copy">${m.id}</span></div>`).join('')
+    : '<p class="hint" style="margin:8px 0 0;">None yet.</p>';
+  const sel = document.getElementById('t-merchant');
+  sel.innerHTML = merchants.map(m => `<option value="${m.id}" data-name="${m.name}">${m.name} (${m.id.slice(0, 8)}...)</option>`).join('');
+}
+
+// ---------- setup: card ----------
+async function issueCard() {
+  const body = {
+    cardholderName: val('c-name'),
+    cardType: val('c-type'),
+    network: val('c-network'),
+    creditLimit: Number(val('c-limit')),
+  };
+  try {
+    const created = await postJson(SVC.issuer + '/api/cards', body);
+    cards.unshift({
+      id: created.id,
+      number: created.cardNumber,
+      cvv: created.cvv,
+      expiry: formatExpiry(created.expiryDate),
+      name: created.cardholderName,
+    });
+    save();
+    renderCards();
+  } catch (e) {
+    alert('Card issuance failed: ' + e.message);
+  }
+}
+
+function formatExpiry(dateStr) {
+  // issuer returns e.g. "2028-12-31" -> POS wants YYMM
+  if (!dateStr) return '2812';
+  const [y, m] = dateStr.split('-');
+  return y.slice(2) + m;
+}
+
+function renderCards() {
+  const list = document.getElementById('cardList');
+  list.innerHTML = cards.length
+    ? cards.map(c => `<div class="store-item"><span>${c.name} &middot; ****${c.number.slice(-4)}</span><span class="id-pill" onclick="copyText('${c.number}')" title="Click to copy card number">${c.number}</span></div>`).join('')
+    : '<p class="hint" style="margin:8px 0 0;">None yet.</p>';
+  const sel = document.getElementById('t-card');
+  sel.innerHTML = cards.map(c => `<option value="${c.number}" data-cvv="${c.cvv}" data-expiry="${c.expiry}">****${c.number.slice(-4)} (${c.name})</option>`).join('');
+  onCardChange();
+}
+
+function onCardChange() {
+  const sel = document.getElementById('t-card');
+  const opt = sel.selectedOptions[0];
+  if (opt) document.getElementById('t-expiry').value = opt.dataset.expiry || '2812';
+}
+document.getElementById('t-card').addEventListener('change', onCardChange);
+
+function copyText(text) {
+  navigator.clipboard?.writeText(text);
+}
+
+// ---------- run a transaction ----------
+function prefillDecline() {
+  document.getElementById('t-amount').value = 9999;
+}
+
+async function submitTransaction() {
+  const merchantSel = document.getElementById('t-merchant');
+  const cardSel = document.getElementById('t-card');
+  if (!merchantSel.value || !cardSel.value) {
+    alert('Create a merchant and issue a card first.');
+    return;
+  }
+  const cardOpt = cardSel.selectedOptions[0];
+  const requirePIN = document.getElementById('t-pin-required').checked;
+
+  const body = {
+    terminalId: val('t-terminal'),
+    merchantId: merchantSel.value,
+    merchantName: merchantSel.selectedOptions[0].dataset.name,
+    amount: Math.round(Number(val('t-amount')) * 100), // dollars -> cents
+    cardReadMethod: val('t-method'),
+    requirePIN: requirePIN,
+    pin: requirePIN ? val('t-pin') : null,
+    cardNumber: cardSel.value,
+    expiryDate: val('t-expiry'),
+    cvv: cardOpt.dataset.cvv,
+  };
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  try {
+    const res = await fetch('/api/pos/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await res.json();
+    renderResult(result);
+    loadTransactions();
+  } catch (e) {
+    document.getElementById('resultPanel').innerHTML =
+      `<p class="result-empty" style="color:var(--red);">Request failed: ${e.message}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Submit transaction';
+  }
+}
+
+function renderResult(result) {
+  const status = result.approved ? 'AUTHORIZED' : 'DECLINED';
+  const panel = document.getElementById('resultPanel');
+  let html = `<div class="result-headline">
+      <span class="status-pill status-${status}">${status}</span>
+      <span class="msg">${result.responseMessage || result.errorMessage || ''}</span>
+    </div>
+    <div class="result-meta">
+      ${result.authorizationCode ? `Auth code <code>${result.authorizationCode}</code> &middot; ` : ''}
+      Transaction <code>${result.transactionId || 'n/a'}</code> &middot; STAN ${result.stan || 'n/a'}
+    </div>`;
+  html += renderTrace(result.steps);
+  panel.innerHTML = html;
+}
+
+function renderTrace(steps) {
+  if (!steps || !steps.length) {
+    return '<p class="hint">No step trace available (request may not have reached transaction-service).</p>';
+  }
+  return '<div class="trace">' + steps.map(s => `
+    <div class="trace-step ${s.status}">
+      <span class="trace-marker"></span>
+      <span><b>${s.stepName}</b></span>
+      <span class="trace-target">${s.target}${s.detail ? ' &mdash; ' + escapeHtml(s.detail) : ''}</span>
+      <span class="trace-duration">${s.durationMs}ms</span>
+    </div>`).join('') + '</div>';
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ---------- transactions table ----------
+let expandedId = null;
+
+async function loadTransactions() {
+  try {
+    const res = await fetch(SVC.transaction + '/api/transactions');
+    const txns = await res.json();
+    renderTable(txns.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
+  } catch (e) {
+    document.getElementById('txnEmpty').style.display = 'block';
+    document.getElementById('txnEmpty').textContent = 'Could not reach transaction-service at :8085.';
+  }
+}
+
+function renderTable(txns) {
+  const body = document.getElementById('txnTableBody');
+  document.getElementById('txnEmpty').style.display = txns.length ? 'none' : 'block';
+  if (!txns.length) { document.getElementById('txnEmpty').textContent = 'No transactions yet - submit one above.'; }
+
+  document.getElementById('stat-auth').textContent = txns.filter(t => t.status === 'AUTHORIZED').length;
+  document.getElementById('stat-decl').textContent = txns.filter(t => t.status === 'DECLINED').length;
+  document.getElementById('stat-fail').textContent = txns.filter(t => t.status === 'FAILED').length;
+
+  body.innerHTML = txns.map(t => {
+    const rows = [`<tr onclick="toggleTrace('${t.id}')">
+      <td>${t.createdAt ? new Date(t.createdAt).toLocaleTimeString() : ''}</td>
+      <td>${(t.merchantId || '').slice(0, 8)}...</td>
+      <td>$${Number(t.amount || 0).toFixed(2)}</td>
+      <td><span class="status-pill status-${t.status}">${t.status}</span></td>
+      <td>${escapeHtml(t.responseMessage || '')}</td>
+      <td>${(t.steps || []).length}</td>
+    </tr>`];
+    if (expandedId === t.id) {
+      rows.push(`<tr class="txn-trace-row"><td colspan="6">${renderTrace(t.steps)}</td></tr>`);
+    }
+    return rows.join('');
+  }).join('');
+}
+
+function toggleTrace(id) {
+  expandedId = expandedId === id ? null : id;
+  loadTransactions();
+}
+
+// ---------- helpers ----------
+function val(id) { return document.getElementById(id).value; }
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+// ---------- init ----------
+renderMerchants();
+renderCards();
+checkServices();
+loadTransactions();
+setInterval(loadTransactions, 4000);
+setInterval(checkServices, 15000);
+</script>
+</body>
+</html>

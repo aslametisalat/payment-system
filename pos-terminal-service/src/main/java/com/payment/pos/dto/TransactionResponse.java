@@ -5,6 +5,7 @@ import com.payment.common.enums.TransactionType;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * Mirrors transaction-service's TransactionResponse for deserializing the
@@ -23,4 +24,5 @@ public class TransactionResponse {
     private String responseCode;
     private String responseMessage;
     private LocalDateTime createdAt;
+    private List<TransactionStepDto> steps;
 }

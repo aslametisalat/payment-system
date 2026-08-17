@@ -155,8 +155,45 @@ instance for the service ...`.
 
 ### Driving a transaction through it
 
-**To explore by hand, one controller at a time:** import
-`postman-collection.json` into Postman. Unlike the automated script below,
+**To watch it on one page, with no tools to install:** open
+[http://localhost:8091/dashboard/index.html](http://localhost:8091/dashboard/index.html)
+in a browser once the six services above are up. It's a single static page
+served straight out of `pos-terminal-service` - no build step, no Postman
+import. It lets you:
+
+1. Create + activate a merchant and issue a card by clicking two buttons
+   (these call `merchant-service` and `issuer-service` directly from the
+   page, so you see the raw API input/output for each).
+2. Fill in a transaction (amount, card read method, PIN, ...) and submit it
+   through `pos-terminal-service`, the same entry point a real terminal
+   would use.
+3. See the result immediately as a **step-by-step trace**: one row per hop
+   (Merchant Validation → Acquirer Processing → Network Routing → Issuer
+   Authorization), each colored green (succeeded), red (declined or
+   failed), showing which service answered, what it said, and how long it
+   took. A decline at the merchant stage shows *only* the merchant step and
+   a "Declined" row - you don't have to guess which of the four services
+   said no.
+4. Watch **every** transaction anyone submits (from the dashboard, curl,
+   Postman, or `test-e2e.sh`) show up in a live table below, colored by
+   outcome, with the same step trace available by clicking a row.
+
+This is powered by a real addition to the data model: every `Transaction`
+now records a `TransactionStep` per hop (`stepName`, `target` service,
+`status`, `detail`, `durationMs`) in `TransactionProcessingService`, and
+that trail is returned in `TransactionResponse.steps` - the dashboard is
+just a view onto data the API already exposes. See
+`GET /api/transactions` or `GET /api/transactions/{id}` on
+`transaction-service` if you want the raw JSON instead of the UI.
+
+(Cross-origin calls from the dashboard's origin, `:8091`, to the other
+service ports are allowed by a dev-only CORS config added to
+`merchant-service`, `acquirer-service`, `issuer-service`,
+`network-service`, and `transaction-service` - not something you'd ship to
+production, but fine for a page that only ever runs on `localhost`.)
+
+**To explore by hand, one controller at a time, in Postman instead:**
+import `postman-collection.json` into Postman. Unlike the dashboard above,
 it doesn't just call the orchestrated entry point - Folder 2 calls
 Merchant's limit check, Acquirer's fraud screening, Network's BIN routing,
 and Issuer's authorize/block/unblock directly, so you can see what each hop

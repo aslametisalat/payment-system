@@ -175,6 +175,7 @@ public class POSTransactionService {
                     .macVerified(true) // outbound request MAC computed and attached in Step 5
                     .pinVerified(request.getRequirePIN())
                     .emvVerified(request.getCardReadMethod() == CardReadMethod.CHIP)
+                    .steps(txnResponse.getSteps())
                     .build();
 
         } catch (Exception e) {

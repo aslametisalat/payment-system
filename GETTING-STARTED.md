@@ -246,6 +246,37 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 
 ## 🚀 Advanced Usage
 
+### Using the dashboard (easiest way to see it happen)
+
+Once `service-registry`, `merchant-service`, `acquirer-service`,
+`network-service`, `issuer-service`, `transaction-service` and
+`pos-terminal-service` are all up, open:
+
+```
+http://localhost:8091/dashboard/index.html
+```
+
+It's a single static page (no separate install, no build step) that lets
+you drive the whole flow with your own inputs and *see* it happen instead
+of reading logs:
+
+1. **Create + activate a merchant** and **issue a card** - two buttons, no
+   curl needed.
+2. **Submit a transaction** - amount, card read method, PIN, all editable -
+   through the real POS entry point.
+3. **See the result as a step-by-step trace**: a colored row per hop
+   (Merchant → Acquirer → Network → Issuer), showing exactly which service
+   approved, declined, or failed the transaction, its message, and how long
+   it took.
+4. **Watch a live table of every transaction** anyone sends through the
+   system (from the dashboard, curl, Postman, or `test-e2e.sh`), color-coded
+   green/red/gray by outcome, with the same trace available by clicking any
+   row.
+
+This is the fastest way to answer "why did my transaction fail" - the
+trace tells you which of the four services said no, and why, without
+tailing log files.
+
 ### Using Postman
 
 Import `postman-collection.json` (repo root) into Postman. It's organized

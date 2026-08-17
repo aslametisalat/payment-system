@@ -174,6 +174,47 @@ class TransactionProcessingServiceTest {
     }
 
     @Test
+    void processTransaction_recordsAStepPerHopWhenEverythingSucceeds() {
+        when(issuerClient.authorize(any())).thenReturn(approvedResponse());
+
+        TransactionResponse response = service.processTransaction(sampleRequest());
+
+        assertThat(response.getSteps()).extracting("stepName", "target", "status").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Merchant Validation", "merchant-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Acquirer Processing", "acquirer-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Network Routing", "network-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Issuer Authorization", "issuer-service", "SUCCESS"));
+    }
+
+    @Test
+    void processTransaction_stepTraceShowsExactlyWhichHopDeclinedIt() {
+        AcquirerResponse declined = new AcquirerResponse();
+        declined.setApproved(false);
+        declined.setMessage("Suspected fraud");
+        when(acquirerClient.processAcquiring(any())).thenReturn(declined);
+
+        TransactionResponse response = service.processTransaction(sampleRequest());
+
+        assertThat(response.getSteps()).extracting("stepName", "target", "status").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Merchant Validation", "merchant-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Acquirer Processing", "acquirer-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Declined", "acquirer-service", "DECLINED"));
+    }
+
+    @Test
+    void processTransaction_stepTraceShowsExactlyWhichHopFailed() {
+        when(issuerClient.authorize(any())).thenThrow(new RuntimeException("issuer-service unreachable"));
+
+        TransactionResponse response = service.processTransaction(sampleRequest());
+
+        assertThat(response.getSteps()).extracting("stepName", "target", "status").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("Merchant Validation", "merchant-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Acquirer Processing", "acquirer-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Network Routing", "network-service", "SUCCESS"),
+                org.assertj.core.groups.Tuple.tuple("Issuer Authorization", "issuer-service", "FAILED"));
+    }
+
+    @Test
     void processTransaction_truncatesAnOversizedErrorMessageInsteadOfFailingTheSave() {
         // Feign exceptions embed the failing URL and response body in
         // getMessage() (real example: a 503 from a Feign call routinely
