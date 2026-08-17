@@ -334,6 +334,14 @@ netstat -tlnp | grep -E ':(8080|8081|8082|8083|8084|8085|8086|8087|8088|8089|809
 kill -9 $(lsof -ti:8080)
 ```
 
+**On Windows, `./start-all.sh` stops partway with `cygheap read copy
+failed` or `fork: retry: Resource temporarily unavailable`:** this is Git
+Bash's fork emulation running out of headroom after backgrounding many
+`mvn` processes - not a code issue. Either run `.\start-all.ps1` from
+PowerShell instead (see the Windows FAQ above), or start just the missing
+service directly in `cmd.exe`/PowerShell (not another Git Bash background
+job): `cd <service> && mvn spring-boot:run`.
+
 ### Service Not Registered with Eureka
 ```bash
 # Wait 30-60 seconds after service starts
@@ -437,6 +445,20 @@ A: Yes! You'll need:
 - Git Bash or WSL2
 - Java 17+
 - Maven 3.8+
+
+If `./start-all.sh` in Git Bash fails partway through with `cygheap read
+copy failed` / `fork: retry: Resource temporarily unavailable`, that's Git
+Bash's fork emulation running out of headroom after backgrounding 12+ `mvn`
+processes in one shell - not a problem with the services. Use
+`start-all.ps1` instead (from a PowerShell prompt, not Git Bash):
+
+```powershell
+.\start-all.ps1
+```
+
+It starts each service as its own native Windows process instead of a
+forked bash job, which avoids the issue entirely. Each service opens in
+its own minimized console window (close a window to stop that service).
 
 **Q: How much does it cost to run?**  
 A: Free! Everything runs locally. No cloud costs.
