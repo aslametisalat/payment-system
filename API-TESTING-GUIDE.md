@@ -100,7 +100,7 @@ curl http://localhost:8080/api/cards/{CARD_ID}
 ```
 
 **Note:** In the H2 console, you can see the actual card number and CVV:
-- Go to: http://localhost:8092/h2-console
+- Go to: http://localhost:8083/h2-console
 - JDBC URL: `jdbc:h2:mem:issuerdb`
 - Username: `sa`
 - Password: (leave blank)
@@ -280,7 +280,7 @@ Each service has its own H2 console:
 |---------|-------------|----------|
 | Merchant | http://localhost:8081/h2-console | jdbc:h2:mem:merchantdb |
 | Acquirer | http://localhost:8082/h2-console | jdbc:h2:mem:acquirerdb |
-| Issuer | http://localhost:8092/h2-console | jdbc:h2:mem:issuerdb |
+| Issuer | http://localhost:8083/h2-console | jdbc:h2:mem:issuerdb |
 | Network | http://localhost:8084/h2-console | jdbc:h2:mem:networkdb |
 | Transaction | http://localhost:8085/h2-console | jdbc:h2:mem:transactiondb |
 | Settlement | http://localhost:8086/h2-console | jdbc:h2:mem:settlementdb |
@@ -320,7 +320,7 @@ Shows all registered services and their status.
 ### Health Checks
 ```bash
 # Check all services
-for port in 8761 8888 8080 8081 8082 8084 8085 8086 8087 8088 8089 8091 8092; do
+for port in 8761 8888 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089 8091; do
   echo "Port $port:"
   curl -s http://localhost:$port/actuator/health | jq .
 done
@@ -337,7 +337,7 @@ Access API documentation:
 
 - API Gateway: http://localhost:8080/swagger-ui.html
 - Merchant Service: http://localhost:8081/swagger-ui.html
-- Issuer Service: http://localhost:8092/swagger-ui.html
+- Issuer Service: http://localhost:8083/swagger-ui.html
 - Transaction Service: http://localhost:8085/swagger-ui.html
 
 ## Troubleshooting

@@ -92,7 +92,7 @@ curl -X POST http://localhost:8080/api/cards \
 ### Step 4: Get Card Details
 To get the actual card number and CVV (needed for testing):
 
-1. Open H2 Console: http://localhost:8092/h2-console
+1. Open H2 Console: http://localhost:8083/h2-console
 2. JDBC URL: `jdbc:h2:mem:issuerdb`
 3. Username: `sa`
 4. Password: (leave blank)
@@ -166,7 +166,7 @@ Each service has its own database:
 | Service | URL | JDBC URL |
 |---------|-----|----------|
 | Merchant | http://localhost:8081/h2-console | jdbc:h2:mem:merchantdb |
-| Issuer | http://localhost:8092/h2-console | jdbc:h2:mem:issuerdb |
+| Issuer | http://localhost:8083/h2-console | jdbc:h2:mem:issuerdb |
 | Transaction | http://localhost:8085/h2-console | jdbc:h2:mem:transactiondb |
 | Settlement | http://localhost:8086/h2-console | jdbc:h2:mem:settlementdb |
 
@@ -174,7 +174,7 @@ All use: Username: `sa`, Password: (blank)
 
 ### Swagger API Documentation
 - Merchant Service: http://localhost:8081/swagger-ui.html
-- Issuer Service: http://localhost:8092/swagger-ui.html
+- Issuer Service: http://localhost:8083/swagger-ui.html
 - Transaction Service: http://localhost:8085/swagger-ui.html
 
 ### View Logs
@@ -246,22 +246,59 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 
 ## 🚀 Advanced Usage
 
+### Using the dashboard (easiest way to see it happen)
+
+Once `service-registry`, `merchant-service`, `acquirer-service`,
+`network-service`, `issuer-service`, `transaction-service` and
+`pos-terminal-service` are all up, open:
+
+```
+http://localhost:8091/dashboard/index.html
+```
+
+It's a single static page (no separate install, no build step) that lets
+you drive the whole flow with your own inputs and *see* it happen instead
+of reading logs:
+
+1. **Create + activate a merchant** and **issue a card** - two buttons, no
+   curl needed.
+2. **Submit a transaction** - amount, card read method, PIN, all editable -
+   through the real POS entry point.
+3. **See the result as a step-by-step trace**: a colored row per hop
+   (Merchant → Acquirer → Network → Issuer), showing exactly which service
+   approved, declined, or failed the transaction, its message, and how long
+   it took.
+4. **Watch a live table of every transaction** anyone sends through the
+   system (from the dashboard, curl, Postman, or `test-e2e.sh`), color-coded
+   green/red/gray by outcome, with the same trace available by clicking any
+   row.
+
+This is the fastest way to answer "why did my transaction fail" - the
+trace tells you which of the four services said no, and why, without
+tailing log files.
+
 ### Using Postman
 
-1. Import the API endpoints:
-   - Create a new Postman collection
-   - Set base URL variable: `{{base_url}}` = `http://localhost:8080`
-   
-2. Create environment variables:
-   ```
-   merchant_id = (from create merchant response)
-   card_id = (from create card response)
-   card_number = (from H2 console)
-   cvv = (from H2 console)
-   ```
+Import `postman-collection.json` (repo root) into Postman. It's organized
+so you can call each controller directly, not just through the full flow:
 
-3. Test the complete flow:
-   - Create Merchant → Activate → Issue Card → Process Transaction
+1. **1. Setup** - create + activate a merchant, issue a card. Run these
+   three first; their test scripts capture `merchantId`/`cardNumber`/`cvv`
+   into collection variables automatically, for every other request to use.
+2. **2. Call Each Controller Directly** - Merchant's limit check, Acquirer's
+   fraud screening, Network's BIN routing, Issuer's authorize/block/unblock
+   - the same four hops `transaction-service` calls internally, but one at a
+   time so you can see exactly what each one does on its own.
+3. **3. Full Orchestrated Flow** - the real `/api/transactions/authorize`
+   entry point (approved and declined examples), plus get/refund.
+4. **4. POS Terminal** - the simulated card terminal, chip+PIN and
+   magnetic-stripe, feeding into the same orchestrated flow over real HTTP.
+
+Every request has a description explaining what it's testing and what to
+try changing. Swagger UI is also available per service once it's running,
+at `http://localhost:{port}/swagger-ui.html` (e.g. `:8082` for
+acquirer-service) - useful for browsing a single service's schema without
+the full collection.
 
 ### Load Testing
 
@@ -291,11 +328,19 @@ ab -n 100 -c 10 -p transaction.json -T application/json \
 ### Services Won't Start
 ```bash
 # Check if ports are in use
-netstat -tlnp | grep -E ':(8080|8081|8082|8084|8085|8086|8087|8088|8089|8091|8092|8761|8888)'
+netstat -tlnp | grep -E ':(8080|8081|8082|8083|8084|8085|8086|8087|8088|8089|8091|8761|8888)'
 
 # Kill processes on specific port if needed
 kill -9 $(lsof -ti:8080)
 ```
+
+**On Windows, `./start-all.sh` stops partway with `cygheap read copy
+failed` or `fork: retry: Resource temporarily unavailable`:** this is Git
+Bash's fork emulation running out of headroom after backgrounding many
+`mvn` processes - not a code issue. Either run `.\start-all.ps1` from
+PowerShell instead (see the Windows FAQ above), or start just the missing
+service directly in `cmd.exe`/PowerShell (not another Git Bash background
+job): `cd <service> && mvn spring-boot:run`.
 
 ### Service Not Registered with Eureka
 ```bash
@@ -400,6 +445,20 @@ A: Yes! You'll need:
 - Git Bash or WSL2
 - Java 17+
 - Maven 3.8+
+
+If `./start-all.sh` in Git Bash fails partway through with `cygheap read
+copy failed` / `fork: retry: Resource temporarily unavailable`, that's Git
+Bash's fork emulation running out of headroom after backgrounding 12+ `mvn`
+processes in one shell - not a problem with the services. Use
+`start-all.ps1` instead (from a PowerShell prompt, not Git Bash):
+
+```powershell
+.\start-all.ps1
+```
+
+It starts each service as its own native Windows process instead of a
+forked bash job, which avoids the issue entirely. Each service opens in
+its own minimized console window (close a window to stop that service).
 
 **Q: How much does it cost to run?**  
 A: Free! Everything runs locally. No cloud costs.

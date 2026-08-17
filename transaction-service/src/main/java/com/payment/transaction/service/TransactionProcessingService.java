@@ -1,11 +1,21 @@
 package com.payment.transaction.service;
 
+import com.payment.transaction.client.AcquirerClient;
 import com.payment.transaction.client.IssuerClient;
+import com.payment.transaction.client.MerchantClient;
+import com.payment.transaction.client.NetworkClient;
+import com.payment.transaction.dto.AcquirerRequest;
+import com.payment.transaction.dto.AcquirerResponse;
 import com.payment.transaction.dto.AuthorizationRequest;
 import com.payment.transaction.dto.AuthorizationResponse;
+import com.payment.transaction.dto.MerchantValidationResult;
+import com.payment.transaction.dto.RoutingRequest;
+import com.payment.transaction.dto.RoutingResponse;
 import com.payment.transaction.dto.TransactionRequest;
 import com.payment.transaction.dto.TransactionResponse;
+import com.payment.transaction.dto.TransactionStepDto;
 import com.payment.transaction.model.Transaction;
+import com.payment.transaction.model.TransactionStep;
 import com.payment.transaction.repository.TransactionRepository;
 import com.payment.common.enums.TransactionStatus;
 import lombok.RequiredArgsConstructor;
@@ -14,20 +24,31 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TransactionProcessingService {
-	
+
     private final TransactionRepository transactionRepository;
+    private final MerchantClient merchantClient;
+    private final AcquirerClient acquirerClient;
+    private final NetworkClient networkClient;
     private final IssuerClient issuerClient;
-    
+
+    /**
+     * Walks a transaction through the same chain a real card payment does:
+     * merchant's own limits, the acquiring bank's fraud screening, the card
+     * network's routing, and finally the issuing bank's approve/decline
+     * call - each one a real HTTP hop to another service, short-circuiting
+     * to DECLINED at whichever stage says no.
+     */
     @Transactional
     public TransactionResponse processTransaction(TransactionRequest request) {
         log.info("Processing transaction for merchant: {}", request.getMerchantId());
-        
+
         // Create transaction record
         Transaction transaction = new Transaction();
         transaction.setMerchantId(request.getMerchantId());
@@ -37,20 +58,58 @@ public class TransactionProcessingService {
         transaction.setAmount(request.getAmount());
         transaction.setCurrency(request.getCurrency());
         transaction.setStatus(TransactionStatus.PENDING);
-        
+
         transaction = transactionRepository.save(transaction);
-        
+
         try {
-            // Call issuer for authorization
+            // Step 1: Merchant Service - is this merchant active and within
+            // its daily/monthly volume limits for this amount?
+            MerchantValidationResult merchantResult = callStep(transaction, "Merchant Validation",
+                    "merchant-service",
+                    () -> merchantClient.validateForTransaction(request.getMerchantId(), request.getAmount()));
+            if (!merchantResult.isValid()) {
+                log.warn("Merchant validation failed: {}", merchantResult.getMessage());
+                return decline(transaction, "03", merchantResult.getMessage(), "merchant-service");
+            }
+
+            // Step 2: Acquirer Service - the merchant's bank runs fraud and
+            // velocity screening before it will forward the transaction.
+            AcquirerResponse acquirerResponse = callStep(transaction, "Acquirer Processing", "acquirer-service",
+                    () -> acquirerClient.processAcquiring(AcquirerRequest.builder()
+                            .merchantId(request.getMerchantId())
+                            .cardNumber(request.getCardNumber())
+                            .amount(request.getAmount())
+                            .terminalId(request.getTerminalId())
+                            .build()));
+            transaction.setAcquirerId(acquirerResponse.getAcquirerId());
+            if (!Boolean.TRUE.equals(acquirerResponse.getApproved())) {
+                log.warn("Acquirer declined: {}", acquirerResponse.getMessage());
+                return decline(transaction, "63", acquirerResponse.getMessage(), "acquirer-service");
+            }
+
+            // Step 3: Network Service - identify the card's network from its
+            // BIN and the issuer it should be routed to.
+            RoutingResponse routingResponse = callStep(transaction, "Network Routing", "network-service",
+                    () -> networkClient.route(RoutingRequest.builder()
+                            .cardNumber(request.getCardNumber())
+                            .amount(request.getAmount())
+                            .build()));
+            transaction.setNetworkId(
+                    routingResponse.getNetwork() != null ? routingResponse.getNetwork().name() : null);
+            transaction.setIssuerId(routingResponse.getIssuerId());
+
+            // Step 4: Issuer Service - the cardholder's own bank makes the
+            // final approve/decline call.
             AuthorizationRequest authRequest = new AuthorizationRequest();
             authRequest.setCardNumber(request.getCardNumber());
             authRequest.setCvv(request.getCvv());
             authRequest.setAmount(request.getAmount());
             authRequest.setCurrency(request.getCurrency());
             authRequest.setMerchantId(request.getMerchantId());
-            
-            AuthorizationResponse authResponse = issuerClient.authorize(authRequest);
-            
+
+            AuthorizationResponse authResponse = callStep(transaction, "Issuer Authorization", "issuer-service",
+                    () -> issuerClient.authorize(authRequest));
+
             // Update transaction with response
             if (authResponse.isApproved()) {
                 transaction.setStatus(TransactionStatus.AUTHORIZED);
@@ -61,16 +120,72 @@ public class TransactionProcessingService {
                 transaction.setStatus(TransactionStatus.DECLINED);
                 log.warn("Transaction declined: {}", authResponse.getMessage());
             }
-            
+
             transaction.setResponseCode(authResponse.getResponseCode());
             transaction.setResponseMessage(authResponse.getMessage());
-            
+
         } catch (Exception e) {
             log.error("Transaction failed: {}", e.getMessage());
             transaction.setStatus(TransactionStatus.FAILED);
-            transaction.setResponseMessage("System error: " + e.getMessage());
+            // Feign exceptions embed the failing URL and response body in
+            // getMessage(), which routinely blows past response_message's
+            // 255-char column limit - truncating here keeps the save from
+            // throwing a second, uncaught exception on top of the first.
+            transaction.setResponseMessage(truncate("System error: " + e.getMessage(), 255));
         }
-        
+
+        return finish(transaction);
+    }
+
+    private static String truncate(String message, int maxLength) {
+        if (message == null || message.length() <= maxLength) {
+            return message;
+        }
+        return message.substring(0, maxLength);
+    }
+
+    /**
+     * Runs one Feign call to another service, recording how it went as a
+     * TransactionStep either way - SUCCESS with the response received, or
+     * FAILED with the exception message, before re-throwing so the outer
+     * catch in processTransaction can still fail the whole transaction.
+     * This is what makes it possible to see *which* hop broke, not just that
+     * something did.
+     */
+    private <T> T callStep(Transaction transaction, String stepName, String target, Supplier<T> call) {
+        long start = System.currentTimeMillis();
+        try {
+            T result = call.get();
+            addStep(transaction, stepName, target, "SUCCESS", "Responded normally", start);
+            return result;
+        } catch (RuntimeException e) {
+            addStep(transaction, stepName, target, "FAILED", e.getMessage(), start);
+            throw e;
+        }
+    }
+
+    private void addStep(Transaction transaction, String stepName, String target, String status,
+                          String detail, long startMillis) {
+        transaction.getSteps().add(TransactionStep.builder()
+                .stepName(stepName)
+                .target(target)
+                .status(status)
+                .detail(truncate(detail, 255))
+                .durationMs(System.currentTimeMillis() - startMillis)
+                .timestamp(LocalDateTime.now())
+                .build());
+    }
+
+    private TransactionResponse decline(Transaction transaction, String responseCode, String message,
+                                         String declinedBy) {
+        transaction.setStatus(TransactionStatus.DECLINED);
+        transaction.setResponseCode(responseCode);
+        transaction.setResponseMessage(message);
+        addStep(transaction, "Declined", declinedBy, "DECLINED", message, System.currentTimeMillis());
+        return finish(transaction);
+    }
+
+    private TransactionResponse finish(Transaction transaction) {
         transaction = transactionRepository.save(transaction);
         return toResponse(transaction);
     }
@@ -117,6 +232,17 @@ public class TransactionProcessingService {
     }
     
     private TransactionResponse toResponse(Transaction transaction) {
+        List<TransactionStepDto> steps = transaction.getSteps().stream()
+            .map(s -> TransactionStepDto.builder()
+                .stepName(s.getStepName())
+                .target(s.getTarget())
+                .status(s.getStatus())
+                .detail(s.getDetail())
+                .durationMs(s.getDurationMs())
+                .timestamp(s.getTimestamp())
+                .build())
+            .collect(Collectors.toList());
+
         return TransactionResponse.builder()
             .id(transaction.getId())
             .merchantId(transaction.getMerchantId())
@@ -125,8 +251,10 @@ public class TransactionProcessingService {
             .amount(transaction.getAmount())
             .currency(transaction.getCurrency())
             .authorizationCode(transaction.getAuthorizationCode())
+            .responseCode(transaction.getResponseCode())
             .responseMessage(transaction.getResponseMessage())
             .createdAt(transaction.getCreatedAt())
+            .steps(steps)
             .build();
     }
 }

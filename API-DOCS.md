@@ -7,7 +7,7 @@
 - **Docs**: http://localhost:8080/v3/api-docs
 
 ### Individual Services
-- **Issuer Service**: http://localhost:8092/swagger-ui/index.html
+- **Issuer Service**: http://localhost:8083/swagger-ui/index.html
 - **Merchant Service**: http://localhost:8081/swagger-ui/index.html  
 - **Acquirer Service**: http://localhost:8082/swagger-ui/index.html
 - **Network Service**: http://localhost:8084/swagger-ui/index.html

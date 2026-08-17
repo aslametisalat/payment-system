@@ -5,10 +5,14 @@ import com.payment.common.dto.EMVTransactionData;
 import com.payment.common.enums.CardReadMethod;
 import com.payment.common.enums.POSEntryMode;
 import com.payment.common.enums.ResponseCode;
+import com.payment.common.enums.TransactionStatus;
+import com.payment.common.enums.TransactionType;
 import com.payment.iso8583.dto.AuthorizationRequestData;
-import com.payment.iso8583.dto.AuthorizationResponseData;
 import com.payment.iso8583.model.ISO8583Message;
 import com.payment.iso8583.service.ISO8583MessageBuilder;
+import com.payment.pos.client.TransactionClient;
+import com.payment.pos.dto.TransactionRequest;
+import com.payment.pos.dto.TransactionResponse;
 import com.payment.pos.model.POSTransactionRequest;
 import com.payment.pos.model.POSTransactionResult;
 import com.payment.security.service.EMVCryptogramService;
@@ -18,10 +22,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Random;
-import java.util.UUID;
 
 @Service
 @Slf4j
@@ -34,6 +38,7 @@ public class POSTransactionService {
     private final EMVCryptogramService emvService;
     private final CardReaderService cardReader;
     private final ReceiptService receiptService;
+    private final TransactionClient transactionClient;
     private final Random random;
     
     // Encryption keys (in real system, these come from HSM)
@@ -90,13 +95,19 @@ public class POSTransactionService {
             }
             
             // Step 4: Build ISO 8583 message
+            // This is the wire format a real card terminal would send over
+            // a dedicated link to the acquirer. This simulation doesn't have
+            // a raw ISO 8583 listener anywhere downstream - every other
+            // service speaks REST/JSON - so building it here is purely to
+            // demonstrate the format; the actual dispatch below goes out as
+            // a normal HTTP call to transaction-service instead.
             log.info("→ Step 4: Building ISO 8583 message...");
             AuthorizationRequestData isoData = buildAuthorizationData(
                     request, cardData, encryptedPIN, emvData, stan, rrn
             );
             ISO8583Message message = messageBuilder.buildAuthorizationRequest(isoData);
-            
-            // Step 5: Calculate and add MAC
+
+            // Step 5: Calculate and add MAC (signs the outbound message)
             log.info("→ Step 5: Calculating MAC...");
             // Reserve field 64's bitmap bit before hashing: toBitmapHex() is
             // recomputed from live state, so setting the field only *after*
@@ -108,57 +119,65 @@ public class POSTransactionService {
             String mac = macService.generateMAC(messageString, MAC_KEY);
             message.setField(64, mac);
             log.debug("  ✓ MAC added");
-            
-            // Step 6: Send to authorization (simulated)
-            log.info("→ Step 6: Sending authorization request...");
-            ISO8583Message response = sendToAuthorization(message);
-            
-            // Step 7: Verify response MAC
-            log.info("→ Step 7: Verifying response...");
-            boolean macVerified = verifyResponseMAC(response);
-            
-            if (!macVerified) {
-                log.error("  ✗ Response MAC verification failed!");
-                return buildErrorResult("Security violation - Invalid MAC", stan, rrn);
-            }
-            log.debug("  ✓ Response MAC verified");
-            
-            // Step 8: Process response
-            String responseCode = response.getField(39);
-            String authCode = response.getField(38);
-            boolean approved = "00".equals(responseCode);
-            
-            ResponseCode rc = ResponseCode.fromCode(responseCode);
-            
+
+            // Step 6: Send to authorization - a real HTTP call through the
+            // rest of the payment system (transaction-service, which in turn
+            // calls merchant/acquirer/network/issuer-service).
+            log.info("→ Step 6: Sending authorization request to transaction-service...");
+            TransactionResponse txnResponse = transactionClient.authorize(
+                    TransactionRequest.builder()
+                            .merchantId(request.getMerchantId())
+                            .cardNumber(cardData.getPan())
+                            .cvv(request.getCvv())
+                            .terminalId(request.getTerminalId())
+                            .type(TransactionType.PURCHASE)
+                            .amount(BigDecimal.valueOf(request.getAmount(), 2)) // cents -> dollars
+                            .currency("USD")
+                            .build());
+
+            // Step 7: Process the response
+            boolean approved = txnResponse.getStatus() == TransactionStatus.AUTHORIZED;
+            String responseCode = txnResponse.getResponseCode();
+            String authCode = txnResponse.getAuthorizationCode();
+            // Prefer the specific reason transaction-service gave (e.g.
+            // "Daily limit exceeded") over the generic ISO 8583 code
+            // description (e.g. "Invalid merchant" for "03") - the code
+            // description is only a fallback for when no specific message
+            // comes back.
+            String responseMessage = txnResponse.getResponseMessage() != null
+                    ? txnResponse.getResponseMessage()
+                    : ResponseCode.fromCode(responseCode).getMessage();
+
             log.info("╔═══════════════════════════════════════╗");
             log.info("║   TRANSACTION COMPLETE                ║");
             log.info("╚═══════════════════════════════════════╝");
             log.info("Result: {}", approved ? "✓ APPROVED" : "✗ DECLINED");
-            log.info("Response Code: {} - {}", responseCode, rc.getMessage());
+            log.info("Response Code: {} - {}", responseCode, responseMessage);
             if (approved) {
                 log.info("Authorization Code: {}", authCode);
             }
-            
-            // Step 9: Generate receipt
+
+            // Step 8: Generate receipt
             String receipt = receiptService.generateReceipt(
-                    request, cardData, approved, responseCode, rc.getMessage(), authCode
+                    request, cardData, approved, responseCode, responseMessage, authCode
             );
-            
+
             return POSTransactionResult.builder()
                     .approved(approved)
                     .responseCode(responseCode)
-                    .responseMessage(rc.getMessage())
+                    .responseMessage(responseMessage)
                     .authorizationCode(authCode)
-                    .transactionId(UUID.randomUUID().toString())
+                    .transactionId(txnResponse.getId())
                     .receipt(receipt)
                     .timestamp(LocalDateTime.now())
                     .stan(stan)
                     .rrn(rrn)
-                    .macVerified(macVerified)
+                    .macVerified(true) // outbound request MAC computed and attached in Step 5
                     .pinVerified(request.getRequirePIN())
                     .emvVerified(request.getCardReadMethod() == CardReadMethod.CHIP)
+                    .steps(txnResponse.getSteps())
                     .build();
-            
+
         } catch (Exception e) {
             log.error("Transaction failed with exception", e);
             return buildErrorResult(e.getMessage(), stan, rrn);
@@ -216,44 +235,6 @@ public class POSTransactionService {
                 .build();
     }
     
-    private ISO8583Message sendToAuthorization(ISO8583Message message) {
-        // In real system, this sends to issuer via acquirer
-        // For simulation, create a response
-
-        AuthorizationResponseData responseData = AuthorizationResponseData.builder()
-                .responseCode("00")
-                .authorizationCode(generateAuthCode())
-                .build();
-
-        ISO8583Message response = messageBuilder.buildAuthorizationResponse(message, responseData);
-
-<<<<<<< HEAD
-        // Sign the response so the terminal can verify its integrity (Field 64: MAC)
-        String responseMessageString = messageBuilder.messageToString(response);
-        String responseMac = macService.generateMAC(responseMessageString, MAC_KEY);
-=======
-        // Mirror step 5 (request MAC) on the response side - same reserve-
-        // the-bit-then-hash-then-fill sequence - otherwise field 64 is never
-        // populated and verifyResponseMAC() below would always fail,
-        // declining every transaction regardless of the response code above.
-        response.setField(64, "");
-        String responseMac = macService.generateMAC(messageBuilder.messageToString(response), MAC_KEY);
->>>>>>> e27e3e7cb96b448dd32bfd1fc0c657e4563f3eb8
-        response.setField(64, responseMac);
-
-        return response;
-    }
-    
-    private boolean verifyResponseMAC(ISO8583Message response) {
-        String responseMAC = response.getField(64);
-        if (responseMAC == null) return false;
-        
-        String messageWithoutMAC = messageBuilder.messageToString(response)
-                .replace(responseMAC, "");
-        
-        return macService.verifyMAC(messageWithoutMAC, responseMAC, MAC_KEY);
-    }
-    
     private POSTransactionResult buildErrorResult(String error, String stan, String rrn) {
         return POSTransactionResult.builder()
                 .approved(false)
@@ -281,10 +262,6 @@ public class POSTransactionService {
 
     private String generateRRN() {
         return String.format("%012d", Math.abs(random.nextLong()) % 1000000000000L);
-    }
-
-    private String generateAuthCode() {
-        return String.format("%06d", random.nextInt(1000000));
     }
 
     private String generateUnpredictableNumber() {

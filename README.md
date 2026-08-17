@@ -169,7 +169,7 @@ cd pos-terminal-service && mvn spring-boot:run &
 | Notification Service | 8088 |
 | Security Service | 8089 |
 | POS Terminal Service | 8091 |
-| Issuer Service | 8092 |
+| Issuer Service | 8083 |
 
 ## API Documentation
 
