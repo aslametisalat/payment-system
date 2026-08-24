@@ -10,6 +10,15 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+# DEMO secret only, shared by every service's JwtAuthenticationFilter to
+# verify tokens this service issues (see AuthController) - a real
+# deployment pulls this from a secrets manager/vault, identically on every
+# service, never from a YAML file in source control.
+payment:
+  security:
+    jwt-secret: "demo-only-hmac-signing-secret-replace-with-real-key-vault-value-1234567890"
+    jwt-expiration-ms: 3600000
+
 management:
   endpoints:
     web:

@@ -11,16 +11,22 @@ import com.payment.pos.model.POSTransactionResult;
 import com.payment.security.service.EMVCryptogramService;
 import com.payment.security.service.MACService;
 import com.payment.security.service.PINBlockService;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.Random;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,7 +51,13 @@ class POSTransactionServiceTest {
     }
 
     private POSTransactionService newService(Random random) {
-        return new POSTransactionService(
+        // Mirrors application.yml's "transaction-service" retry instance
+        // (2 attempts) but with a near-zero wait so retry tests stay fast.
+        RetryRegistry retryRegistry = RetryRegistry.of(RetryConfig.custom()
+                .maxAttempts(2)
+                .waitDuration(Duration.ofMillis(5))
+                .build());
+        POSTransactionService service = new POSTransactionService(
                 new ISO8583MessageBuilder(),
                 new PINBlockService(),
                 new MACService(),
@@ -53,7 +65,15 @@ class POSTransactionServiceTest {
                 new CardReaderService(),
                 new ReceiptService(),
                 transactionClient,
-                random);
+                random,
+                CircuitBreakerRegistry.ofDefaults(),
+                retryRegistry);
+        // @Value-injected in production; set directly here since this test
+        // builds the service without a Spring context.
+        ReflectionTestUtils.setField(service, "pinEncryptionKey", "0123456789ABCDEF");
+        ReflectionTestUtils.setField(service, "macKey", "FEDCBA9876543210");
+        ReflectionTestUtils.setField(service, "cardMasterKey", "0123456789ABCDEF");
+        return service;
     }
 
     private POSTransactionRequest.POSTransactionRequestBuilder sampleRequest() {
@@ -192,6 +212,45 @@ class POSTransactionServiceTest {
 
         assertThat(result.getApproved()).isFalse();
         assertThat(result.getErrorMessage()).contains("transaction-service unreachable");
+        // One retry attempt before giving up - see resilientAuthorize().
+        verify(transactionClient, times(2)).authorize(any());
+    }
+
+    @Test
+    void processTransaction_retriesOnceBeforeSucceedingWhenTransactionServiceHiccups() {
+        when(transactionClient.authorize(any()))
+                .thenThrow(new RuntimeException("connection reset"))
+                .thenReturn(authorizedResponse());
+        POSTransactionService service = newService(new Random(6));
+
+        POSTransactionResult result = service.processTransaction(sampleRequest()
+                .cardReadMethod(CardReadMethod.CHIP)
+                .requirePIN(true)
+                .pin("1234")
+                .build());
+
+        assertThat(result.getApproved()).isTrue();
+        verify(transactionClient, times(2)).authorize(any());
+    }
+
+    @Test
+    void processTransaction_sendsTheSameIdempotencyKeyOnRetryAsTheOriginalAttempt() {
+        when(transactionClient.authorize(any()))
+                .thenThrow(new RuntimeException("connection reset"))
+                .thenReturn(authorizedResponse());
+        POSTransactionService service = newService(new Random(6));
+
+        service.processTransaction(sampleRequest()
+                .cardReadMethod(CardReadMethod.CHIP)
+                .requirePIN(true)
+                .pin("1234")
+                .build());
+
+        ArgumentCaptor<TransactionRequest> captor = ArgumentCaptor.forClass(TransactionRequest.class);
+        verify(transactionClient, times(2)).authorize(captor.capture());
+        assertThat(captor.getAllValues().get(0).getIdempotencyKey())
+                .isNotBlank()
+                .isEqualTo(captor.getAllValues().get(1).getIdempotencyKey());
     }
 
     @Test

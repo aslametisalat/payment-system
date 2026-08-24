@@ -15,6 +15,9 @@ import com.payment.transaction.dto.TransactionRequest;
 import com.payment.transaction.dto.TransactionResponse;
 import com.payment.transaction.model.Transaction;
 import com.payment.transaction.repository.TransactionRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.RetryRegistry;
+import org.springframework.jms.core.JmsTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -52,7 +55,8 @@ class TransactionProcessingServiceTest {
         networkClient = mock(NetworkClient.class);
         issuerClient = mock(IssuerClient.class);
         service = new TransactionProcessingService(
-                transactionRepository, merchantClient, acquirerClient, networkClient, issuerClient);
+                transactionRepository, merchantClient, acquirerClient, networkClient, issuerClient,
+                CircuitBreakerRegistry.ofDefaults(), RetryRegistry.ofDefaults(), mock(JmsTemplate.class));
 
         // Simulate JPA assigning an ID and stamping defaults on first save.
         when(transactionRepository.save(any(Transaction.class))).thenAnswer(inv -> {
@@ -227,6 +231,60 @@ class TransactionProcessingServiceTest {
 
         assertThat(response.getStatus()).isEqualTo(TransactionStatus.FAILED);
         assertThat(response.getResponseMessage().length()).isLessThanOrEqualTo(255);
+    }
+
+    @Test
+    void processTransaction_retriesTheAcquirerCallOnceBeforeSucceeding() {
+        AcquirerResponse approvedOnSecondTry = new AcquirerResponse();
+        approvedOnSecondTry.setApproved(true);
+        approvedOnSecondTry.setAcquirerId("ACQ-123456");
+        when(acquirerClient.processAcquiring(any()))
+                .thenThrow(new RuntimeException("acquirer-service timed out"))
+                .thenReturn(approvedOnSecondTry);
+        when(issuerClient.authorize(any())).thenReturn(approvedResponse());
+
+        TransactionResponse response = service.processTransaction(sampleRequest());
+
+        assertThat(response.getStatus()).isEqualTo(TransactionStatus.AUTHORIZED);
+        verify(acquirerClient, times(2)).processAcquiring(any());
+    }
+
+    @Test
+    void processTransaction_doesNotRetryTheMerchantCallOnFailure() {
+        // merchant-service mutates currentDailyVolume, so it's deliberately
+        // excluded from RETRYABLE_TARGETS - a blind retry here could count
+        // one purchase against a merchant's daily limit twice.
+        MerchantValidationResult validOnSecondTry = new MerchantValidationResult();
+        validOnSecondTry.setValid(true);
+        when(merchantClient.validateForTransaction(any(), any()))
+                .thenThrow(new RuntimeException("merchant-service timed out"))
+                .thenReturn(validOnSecondTry);
+
+        TransactionResponse response = service.processTransaction(sampleRequest());
+
+        assertThat(response.getStatus()).isEqualTo(TransactionStatus.FAILED);
+        verify(merchantClient, times(1)).validateForTransaction(any(), any());
+    }
+
+    @Test
+    void processTransaction_returnsTheCachedResultForARepeatedIdempotencyKey() {
+        Transaction alreadyProcessed = new Transaction();
+        alreadyProcessed.setId("txn-original");
+        alreadyProcessed.setStatus(TransactionStatus.AUTHORIZED);
+        alreadyProcessed.setResponseCode("00");
+        alreadyProcessed.setResponseMessage("Approved");
+        when(transactionRepository.findByIdempotencyKey("retry-key-1")).thenReturn(Optional.of(alreadyProcessed));
+
+        TransactionRequest request = sampleRequest();
+        request.setIdempotencyKey("retry-key-1");
+
+        TransactionResponse response = service.processTransaction(request);
+
+        assertThat(response.getId()).isEqualTo("txn-original");
+        assertThat(response.getStatus()).isEqualTo(TransactionStatus.AUTHORIZED);
+        // A replay must not re-run the flow - no downstream calls, no new row.
+        verifyNoInteractions(merchantClient, acquirerClient, networkClient, issuerClient);
+        verify(transactionRepository, never()).save(any());
     }
 
     @Test

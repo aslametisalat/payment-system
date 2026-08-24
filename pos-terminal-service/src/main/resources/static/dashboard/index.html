@@ -159,7 +159,10 @@
     <h1>Payment System Dashboard</h1>
     <div class="subtitle">POS &rarr; Transaction &rarr; Merchant &rarr; Acquirer &rarr; Network &rarr; Issuer, live</div>
   </div>
-  <div id="serviceStatus"></div>
+  <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span id="authStatus" class="svc-dot" style="cursor:pointer;" onclick="fetchToken()" title="Click to fetch/refresh a demo token from security-service"><span class="dot" id="authDot"></span>not authenticated</span>
+    <div id="serviceStatus"></div>
+  </div>
 </header>
 
 <main>
@@ -270,11 +273,12 @@
 </main>
 
 <footer>
-  merchant-service :8081 &middot; acquirer-service :8082 &middot; issuer-service :8083 &middot; network-service :8084 &middot; transaction-service :8085 &middot; pos-terminal-service :8091
+  security-service :8089 &middot; merchant-service :8081 &middot; acquirer-service :8082 &middot; issuer-service :8083 &middot; network-service :8084 &middot; transaction-service :8085 &middot; pos-terminal-service :8091
 </footer>
 
 <script>
 const SVC = {
+  security: 'http://localhost:8089',
   merchant: 'http://localhost:8081',
   acquirer: 'http://localhost:8082',
   issuer: 'http://localhost:8083',
@@ -285,6 +289,7 @@ const SVC = {
 
 let merchants = JSON.parse(localStorage.getItem('dash-merchants') || '[]');
 let cards = JSON.parse(localStorage.getItem('dash-cards') || '[]');
+let authToken = null;
 
 function save() {
   localStorage.setItem('dash-merchants', JSON.stringify(merchants));
@@ -293,10 +298,40 @@ function save() {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+// ---------- auth: every /api/** call below except health checks needs a
+// bearer token, issued here by security-service. Demo credentials only -
+// see security-service's AuthController. ----------
+async function fetchToken() {
+  const badge = document.getElementById('authStatus');
+  const dot = document.getElementById('authDot');
+  badge.lastChild.textContent = 'authenticating...';
+  try {
+    const res = await fetch(`${SVC.security}/api/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'demo', password: 'demo123' }),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const data = await res.json();
+    authToken = data.accessToken;
+    dot.className = 'dot up';
+    badge.lastChild.textContent = `authenticated (expires in ${Math.round(data.expiresInSeconds / 60)}m)`;
+  } catch (e) {
+    authToken = null;
+    dot.className = 'dot down';
+    badge.lastChild.textContent = 'not authenticated - click to retry';
+  }
+}
+
+function authHeaders(extra = {}) {
+  return authToken ? { ...extra, Authorization: `Bearer ${authToken}` } : extra;
+}
+
 // ---------- service health dots ----------
 async function checkServices() {
   const targets = [
-    ['merchant', SVC.merchant + '/api/merchants'],
+    ['security', SVC.security + '/api/auth/health'],
+    ['merchant', SVC.merchant + '/api/merchants/health'],
     ['acquirer', SVC.acquirer + '/api/acquirers/health'],
     ['issuer', SVC.issuer + '/api/cards/health'],
     ['network', SVC.network + '/api/network/health'],
@@ -331,7 +366,8 @@ async function createMerchant() {
   };
   try {
     const created = await postJson(SVC.merchant + '/api/merchants', body);
-    await fetch(`${SVC.merchant}/api/merchants/${created.id}/status?status=ACTIVE`, { method: 'PUT' });
+    await fetch(`${SVC.merchant}/api/merchants/${created.id}/status?status=ACTIVE`,
+      { method: 'PUT', headers: authHeaders() });
     merchants.unshift({ id: created.id, name: created.businessName });
     save();
     renderMerchants();
@@ -437,7 +473,7 @@ async function submitTransaction() {
   try {
     const res = await fetch('/api/pos/transaction', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
     });
     const result = await res.json();
@@ -489,7 +525,7 @@ let expandedId = null;
 
 async function loadTransactions() {
   try {
-    const res = await fetch(SVC.transaction + '/api/transactions');
+    const res = await fetch(SVC.transaction + '/api/transactions', { headers: authHeaders() });
     const txns = await res.json();
     renderTable(txns.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
   } catch (e) {
@@ -534,7 +570,7 @@ function val(id) { return document.getElementById(id).value; }
 async function postJson(url, body) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -548,9 +584,10 @@ async function postJson(url, body) {
 renderMerchants();
 renderCards();
 checkServices();
-loadTransactions();
+fetchToken().then(loadTransactions);
 setInterval(loadTransactions, 4000);
 setInterval(checkServices, 15000);
+setInterval(fetchToken, 15 * 60 * 1000); // demo tokens expire after an hour - refresh well before that
 </script>
 </body>
 </html>

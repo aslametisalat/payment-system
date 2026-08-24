@@ -20,3 +20,10 @@ eureka:
     enabled: false
     register-with-eureka: false
     fetch-registry: false
+
+# JwtUtil is still component-scanned into this test's context even though
+# JwtAuthenticationFilter is disabled (@AutoConfigureMockMvc(addFilters =
+# false)) - it needs some value for its @Value binding to succeed.
+payment:
+  security:
+    jwt-secret: "test-only-hmac-signing-secret-not-a-real-secret-1234567890"

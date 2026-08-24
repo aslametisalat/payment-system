@@ -61,4 +61,10 @@ public class MerchantController {
             @RequestParam BigDecimal amount) {
         return ResponseEntity.ok(merchantService.validateForTransaction(id, amount));
     }
+
+    @GetMapping("/health")
+    @Operation(summary = "Health check")
+    public ResponseEntity<String> health() {
+        return ResponseEntity.ok("Merchant Service Operational");
+    }
 }

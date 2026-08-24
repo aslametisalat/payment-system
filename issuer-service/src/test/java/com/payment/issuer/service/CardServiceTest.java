@@ -11,6 +11,7 @@ import com.payment.security.service.MACService;
 import com.payment.security.service.PINBlockService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -48,6 +49,10 @@ class CardServiceTest {
         macService = mock(MACService.class);
         random = mock(Random.class);
         cardService = new CardService(cardRepository, pinBlockService, emvService, macService, random);
+        // @Value-injected in production; set directly here since this test
+        // builds the service without a Spring context.
+        ReflectionTestUtils.setField(cardService, "pinDecryptionKey", "0123456789ABCDEF");
+        ReflectionTestUtils.setField(cardService, "macKey", "FEDCBA9876543210");
 
         when(cardRepository.save(any(Card.class))).thenAnswer(inv -> inv.getArgument(0));
         when(random.nextInt(1000000)).thenReturn(654321);

@@ -18,6 +18,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.jms.core.JmsTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -48,7 +49,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * the JVM.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureMockMvc
+// addFilters = false: this test is about the HTTP/service/repository stack,
+// not the JWT gate (JwtAuthenticationFilter, registered via component-
+// scanning com.payment.common.security) - same reason the Feign clients
+// and JmsTemplate below are mocked rather than exercised for real.
+@AutoConfigureMockMvc(addFilters = false)
 class TransactionAuthorizationIntegrationTest {
 
     @Autowired
@@ -68,6 +73,12 @@ class TransactionAuthorizationIntegrationTest {
 
     @MockBean
     private IssuerClient issuerClient;
+
+    // Stands in for the real broker connection (see EmbeddedBrokerConfig) -
+    // this test is about the HTTP/service/repository stack, not messaging,
+    // the same reason the four Feign clients above are mocked too.
+    @MockBean
+    private JmsTemplate jmsTemplate;
 
     @BeforeEach
     void stubTheUpstreamHopsAsHealthy() {

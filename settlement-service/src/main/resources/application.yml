@@ -8,6 +8,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+  artemis:
+    # Connects to transaction-service's broker (see its EmbeddedBrokerConfig)
+    # as a plain client - this service never talks to the auth path
+    # directly, only reacts to what lands on transaction.completed.
+    mode: native
+    broker-url: tcp://localhost:61616
 eureka:
   client:
     service-url:

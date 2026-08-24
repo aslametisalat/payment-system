@@ -22,6 +22,15 @@ public class Transaction {
     private String merchantId;
     private String cardNumber;
     private String terminalId;
+
+    // Caller-supplied key (e.g. from a POS retry after a timeout) used to
+    // detect and short-circuit duplicate authorize requests instead of
+    // re-running the flow - see TransactionProcessingService. Unique (but
+    // nullable, so callers that don't send one aren't affected) so the DB
+    // itself rejects a second concurrent insert with the same key instead
+    // of relying on a check-then-act race in application code.
+    @Column(unique = true)
+    private String idempotencyKey;
     
     @Enumerated(EnumType.STRING)
     private TransactionType type;
