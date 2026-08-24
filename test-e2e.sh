@@ -16,6 +16,7 @@
 
 set -u
 
+SECURITY_URL="http://localhost:8089"
 MERCHANT_URL="http://localhost:8081"
 ISSUER_URL="http://localhost:8083"
 POS_URL="http://localhost:8091"
@@ -55,7 +56,8 @@ step() { echo -e "\n${YELLOW}=== $1 ===${NC}"; }
 # ---- pre-flight ----------------------------------------------------------
 
 step "Checking required services"
-check_service "merchant-service" "$MERCHANT_URL/api/merchants"
+check_service "security-service" "$SECURITY_URL/api/auth/health"
+check_service "merchant-service" "$MERCHANT_URL/api/merchants/health"
 check_service "issuer-service"   "$ISSUER_URL/api/cards/health"
 check_service "pos-terminal-service" "$POS_URL/api/pos/health"
 # transaction-service, acquirer-service and network-service are hit
@@ -67,12 +69,26 @@ if [ "$FAILED" -eq 1 ]; then
     exit 1
 fi
 
+# ---- 0. auth -------------------------------------------------------------
+
+step "0. Get a demo bearer token"
+TOKEN_BODY=$(curl -s -X POST "$SECURITY_URL/api/auth/token" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"demo123"}')
+TOKEN=$(json_str "$TOKEN_BODY" "accessToken")
+if [ -z "$TOKEN" ]; then
+    echo -e "${RED}✗ Could not get a token. Response:${NC}\n$TOKEN_BODY"
+    exit 1
+fi
+AUTH_HEADER="Authorization: Bearer $TOKEN"
+echo -e "${GREEN}✓ Got a token${NC} - every call below sends it; without one, every service in the flow now returns 401 (see JwtAuthenticationFilter)."
+
 # ---- 1. merchant -----------------------------------------------------
 
 step "1. Create + activate a merchant"
 RUN_ID="$$-$RANDOM"
 MERCHANT_BODY=$(curl -s -X POST "$MERCHANT_URL/api/merchants" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "$AUTH_HEADER" \
   -d '{
     "businessName": "Coffee Shop",
     "email": "shop+e2e-'"$RUN_ID"'@coffee.com",
@@ -90,14 +106,14 @@ if [ -z "$MERCHANT_ID" ]; then
 fi
 echo "Created merchant $MERCHANT_ID"
 
-curl -s -o /dev/null -X PUT "$MERCHANT_URL/api/merchants/${MERCHANT_ID}/status?status=ACTIVE"
+curl -s -o /dev/null -X PUT "$MERCHANT_URL/api/merchants/${MERCHANT_ID}/status?status=ACTIVE" -H "$AUTH_HEADER"
 echo -e "${GREEN}✓ Merchant active${NC}"
 
 # ---- 2. card -----------------------------------------------------------
 
 step "2. Issue a card"
 CARD_BODY=$(curl -s -X POST "$ISSUER_URL/api/cards" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "$AUTH_HEADER" \
   -d '{
     "cardholderName": "John Doe",
     "cardType": "CREDIT",
@@ -116,7 +132,7 @@ echo "Issued card ending ${CARD_NUMBER: -4}"
 
 step "3. POS purchase: \$25.99, chip + PIN (should be APPROVED)"
 APPROVE_BODY=$(curl -s -X POST "$POS_URL/api/pos/transaction" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "$AUTH_HEADER" \
   -d "{
     \"terminalId\": \"TERM0001\", \"merchantId\": \"${MERCHANT_ID}\", \"merchantName\": \"Coffee Shop\",
     \"amount\": 2599, \"cardReadMethod\": \"CHIP\", \"requirePIN\": true, \"pin\": \"1234\",
@@ -138,7 +154,7 @@ fi
 
 step "4. POS purchase: \$9,999.00 - exceeds the merchant's \$10,000 daily limit (should be DECLINED)"
 DECLINE_BODY=$(curl -s -X POST "$POS_URL/api/pos/transaction" \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "$AUTH_HEADER" \
   -d "{
     \"terminalId\": \"TERM0001\", \"merchantId\": \"${MERCHANT_ID}\", \"merchantName\": \"Coffee Shop\",
     \"amount\": 999900, \"cardReadMethod\": \"CHIP\", \"requirePIN\": true, \"pin\": \"1234\",
@@ -152,6 +168,23 @@ if [ "$DECLINED_APPROVED" = "false" ]; then
 else
     echo -e "${RED}✗ Expected DECLINED, got approved=$DECLINED_APPROVED${NC}"
     echo "Full response: $DECLINE_BODY"
+    FAILED=1
+fi
+
+# ---- 5. auth is actually enforced ---------------------------------------
+
+step "5. Same purchase, no token this time (should be 401)"
+UNAUTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$POS_URL/api/pos/transaction" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"terminalId\": \"TERM0001\", \"merchantId\": \"${MERCHANT_ID}\", \"merchantName\": \"Coffee Shop\",
+    \"amount\": 2599, \"cardReadMethod\": \"CHIP\", \"requirePIN\": true, \"pin\": \"1234\",
+    \"cardNumber\": \"${CARD_NUMBER}\", \"expiryDate\": \"2812\", \"cvv\": \"${CVV}\"
+  }")
+if [ "$UNAUTH_STATUS" = "401" ]; then
+    echo -e "${GREEN}✓ Rejected with 401 as expected${NC} - the JWT gate is actually enforced, not just decoration."
+else
+    echo -e "${RED}✗ Expected 401, got $UNAUTH_STATUS${NC}"
     FAILED=1
 fi
 

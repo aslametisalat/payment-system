@@ -22,8 +22,30 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+# DEMO values only - a real issuer reads these from an HSM/key-management
+# service (e.g. Thales, AWS KMS) at runtime, never from a config file in
+# source control. Must match pos-terminal-service's payment.security.*
+# values - this simulates the two ends of the same symmetric key.
+payment:
+  security:
+    pin-decryption-key: "0123456789ABCDEF"
+    mac-key: "FEDCBA9876543210"
+    jwt-secret: "demo-only-hmac-signing-secret-replace-with-real-key-vault-value-1234567890"
+
 management:
   endpoints:
     web:
       exposure:
         include: "*"
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      # No Zipkin server runs anywhere in this project - see
+      # merchant-service's application.yml for why that's fine.
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"

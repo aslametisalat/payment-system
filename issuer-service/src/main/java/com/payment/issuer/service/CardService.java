@@ -5,6 +5,7 @@ import com.payment.issuer.model.Card;
 import com.payment.issuer.repository.CardRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
@@ -27,10 +28,19 @@ public class CardService {
     private final MACService macService;
     private final Random random;
 
-    private static final String PIN_DECRYPTION_KEY = "0123456789ABCDEF";
-    private static final String MAC_KEY = "FEDCBA9876543210";
+    // DEMO keys only, read from config instead of hardcoded in source so
+    // they aren't literally checked into version control - a real issuer
+    // pulls these from an HSM/key-management service (e.g. Thales, AWS KMS)
+    // at runtime and never has them in application code or config at all.
+    // Must match pos-terminal-service's payment.security.* values, since
+    // this simulates the two ends of the same symmetric key.
+    @Value("${payment.security.pin-decryption-key}")
+    private String pinDecryptionKey;
 
-    
+    @Value("${payment.security.mac-key}")
+    private String macKey;
+
+
     @Transactional
     public CardResponse issueCard(CardRequest request) {
         log.info("Issuing new card for: {}", request.getCardholderName());
@@ -178,7 +188,7 @@ public class CardService {
            boolean macValid = macService.verifyMAC(
                buildMessageForMAC(request),
                request.getMac(),
-               MAC_KEY
+               macKey
            );
            
            if (!macValid) {
@@ -196,7 +206,7 @@ public class CardService {
        if (request.getEncryptedPIN() != null) {
            boolean pinValid = pinBlockService.verifyPIN(
                request.getEncryptedPIN(),
-               PIN_DECRYPTION_KEY,
+               pinDecryptionKey,
                card.getCvv(), // Using CVV as PIN for simulation
                request.getCardNumber()
            );

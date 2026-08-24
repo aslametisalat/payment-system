@@ -11,7 +11,7 @@ import java.util.Random;
 @SpringBootApplication
 @EnableDiscoveryClient
 @EnableFeignClients
-@ComponentScan(basePackages = {"com.payment.pos", "com.payment.security", "com.payment.iso8583"})
+@ComponentScan(basePackages = {"com.payment.pos", "com.payment.security", "com.payment.iso8583", "com.payment.common"})
 public class POSTerminalApplication {
     public static void main(String[] args) {
         SpringApplication.run(POSTerminalApplication.class, args);

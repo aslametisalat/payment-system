@@ -18,12 +18,21 @@ import com.payment.transaction.model.Transaction;
 import com.payment.transaction.model.TransactionStep;
 import com.payment.transaction.repository.TransactionRepository;
 import com.payment.common.enums.TransactionStatus;
+import com.payment.common.event.TransactionCompletedEvent;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -37,6 +46,30 @@ public class TransactionProcessingService {
     private final AcquirerClient acquirerClient;
     private final NetworkClient networkClient;
     private final IssuerClient issuerClient;
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RetryRegistry retryRegistry;
+    private final JmsTemplate jmsTemplate;
+
+    // One queue per subscriber, all fed the same event, rather than one
+    // shared queue or a topic: a JMS Queue is point-to-point, so three
+    // consumers reading the same queue name would each get a THIRD of the
+    // messages (competed for, not fanned out) - that's exactly what
+    // happened here in practice before this was split apart. A topic would
+    // fan out correctly, but a non-durable subscriber that happens to be
+    // restarting when an event fires just loses it forever. Three named
+    // queues gives every one of the three services every event, with each
+    // queue durably holding messages for its own consumer if that consumer
+    // is briefly down - the same trade-off a real system makes with
+    // per-consumer queues or durable topic subscriptions.
+    private static final List<String> TRANSACTION_COMPLETED_QUEUES = List.of(
+            "transaction.completed.settlement",
+            "transaction.completed.reporting",
+            "transaction.completed.notification");
+
+    // Only these two downstream hops are safe to retry automatically - see
+    // the resilience4j.retry comment in application.yml for why
+    // merchant-service and issuer-service are deliberately excluded.
+    private static final Set<String> RETRYABLE_TARGETS = Set.of("network-service", "acquirer-service");
 
     /**
      * Walks a transaction through the same chain a real card payment does:
@@ -49,6 +82,22 @@ public class TransactionProcessingService {
     public TransactionResponse processTransaction(TransactionRequest request) {
         log.info("Processing transaction for merchant: {}", request.getMerchantId());
 
+        // Idempotency: a caller that retried this exact request (its own
+        // Feign call timed out, a circuit breaker's retry fired, ...) sends
+        // the same key again. If we've already recorded a result for it,
+        // hand back that result instead of re-running the flow - a second
+        // real authorization would mean a second hold on the cardholder's
+        // funds for one purchase.
+        String idempotencyKey = request.getIdempotencyKey();
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            Optional<Transaction> existing = transactionRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Idempotent replay for key {} - returning transaction {} unchanged",
+                        idempotencyKey, existing.get().getId());
+                return toResponse(existing.get());
+            }
+        }
+
         // Create transaction record
         Transaction transaction = new Transaction();
         transaction.setMerchantId(request.getMerchantId());
@@ -58,8 +107,21 @@ public class TransactionProcessingService {
         transaction.setAmount(request.getAmount());
         transaction.setCurrency(request.getCurrency());
         transaction.setStatus(TransactionStatus.PENDING);
+        transaction.setIdempotencyKey(idempotencyKey);
 
-        transaction = transactionRepository.save(transaction);
+        try {
+            transaction = transactionRepository.save(transaction);
+        } catch (DataIntegrityViolationException raceLoser) {
+            // Narrow race: two retries with the same key both passed the
+            // check above before either committed. The database's unique
+            // constraint on idempotency_key is what actually closes this
+            // window - whichever insert loses falls back to the winner's row.
+            log.warn("Idempotency key {} was inserted concurrently - returning the winning transaction",
+                    idempotencyKey);
+            return transactionRepository.findByIdempotencyKey(idempotencyKey)
+                    .map(this::toResponse)
+                    .orElseThrow(() -> raceLoser);
+        }
 
         try {
             // Step 1: Merchant Service - is this merchant active and within
@@ -145,17 +207,25 @@ public class TransactionProcessingService {
     }
 
     /**
-     * Runs one Feign call to another service, recording how it went as a
-     * TransactionStep either way - SUCCESS with the response received, or
-     * FAILED with the exception message, before re-throwing so the outer
-     * catch in processTransaction can still fail the whole transaction.
-     * This is what makes it possible to see *which* hop broke, not just that
-     * something did.
+     * Runs one Feign call to another service - through a per-service circuit
+     * breaker, and a retry too if that hop is idempotent-safe (see
+     * RETRYABLE_TARGETS) - recording how it went as a TransactionStep either
+     * way: SUCCESS with the response received, or FAILED with the exception
+     * message (a tripped-open breaker included), before re-throwing so the
+     * outer catch in processTransaction can still fail the whole
+     * transaction. This is what makes it possible to see *which* hop broke,
+     * not just that something did.
      */
     private <T> T callStep(Transaction transaction, String stepName, String target, Supplier<T> call) {
         long start = System.currentTimeMillis();
         try {
-            T result = call.get();
+            CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(target);
+            Supplier<T> decorated = CircuitBreaker.decorateSupplier(circuitBreaker, call);
+            if (RETRYABLE_TARGETS.contains(target)) {
+                Retry retry = retryRegistry.retry(target);
+                decorated = Retry.decorateSupplier(retry, decorated);
+            }
+            T result = decorated.get();
             addStep(transaction, stepName, target, "SUCCESS", "Responded normally", start);
             return result;
         } catch (RuntimeException e) {
@@ -187,7 +257,40 @@ public class TransactionProcessingService {
 
     private TransactionResponse finish(Transaction transaction) {
         transaction = transactionRepository.save(transaction);
+        publishCompletionEvent(transaction);
         return toResponse(transaction);
+    }
+
+    /**
+     * Hands the transaction's outcome off to whichever services care about
+     * it after the fact - settlement, reporting, notification - instead of
+     * calling them synchronously on the authorization path the way
+     * merchant/acquirer/network/issuer are called above. None of those
+     * three need to be up, fast, or even running for authorize() to
+     * respond; if the broker itself is unreachable, that's logged and
+     * swallowed rather than failing a transaction that already succeeded
+     * over a completely unrelated system.
+     */
+    private void publishCompletionEvent(Transaction transaction) {
+        TransactionCompletedEvent event = TransactionCompletedEvent.builder()
+                .transactionId(transaction.getId())
+                .merchantId(transaction.getMerchantId())
+                .amount(transaction.getAmount())
+                .currency(transaction.getCurrency())
+                .status(transaction.getStatus().name())
+                .responseCode(transaction.getResponseCode())
+                .responseMessage(transaction.getResponseMessage())
+                .authorizationCode(transaction.getAuthorizationCode())
+                .occurredAt(LocalDateTime.now())
+                .build();
+        for (String queue : TRANSACTION_COMPLETED_QUEUES) {
+            try {
+                jmsTemplate.convertAndSend(queue, event);
+            } catch (Exception e) {
+                log.warn("Could not publish completion event for transaction {} to {}: {}",
+                        transaction.getId(), queue, e.getMessage());
+            }
+        }
     }
     
     @Transactional

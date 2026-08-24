@@ -2,6 +2,7 @@ package com.payment.reporting.controller;
 
 import com.payment.reporting.dto.TransactionReport;
 import com.payment.reporting.dto.MerchantDashboard;
+import com.payment.reporting.service.LiveActivityTracker;
 import com.payment.reporting.service.ReportingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/reports")
@@ -19,8 +21,22 @@ import java.time.LocalDate;
 @Slf4j
 @Tag(name = "Reporting", description = "Analytics and Reporting Operations")
 public class ReportingController {
-    
+
     private final ReportingService reportingService;
+    private final LiveActivityTracker activityTracker;
+
+    /**
+     * Live, in-memory tally built entirely from transaction-service's
+     * "transaction.completed" events - see LiveActivityTracker. Resets on
+     * restart; the endpoints above are the source of truth for anything
+     * that needs to be correct across a restart or a specific date range.
+     */
+    @GetMapping("/live-activity")
+    @Operation(summary = "Get live transaction activity",
+               description = "Per-merchant counts built from async transaction.completed events since this service started")
+    public ResponseEntity<Map<String, LiveActivityTracker.MerchantActivity>> getLiveActivity() {
+        return ResponseEntity.ok(activityTracker.snapshot());
+    }
     
     /**
      * Get transaction report for merchant

@@ -9,7 +9,7 @@ import java.util.Random;
 
 @SpringBootApplication
 @EnableDiscoveryClient
-@ComponentScan(basePackages = {"com.payment.issuer", "com.payment.security"})
+@ComponentScan(basePackages = {"com.payment.issuer", "com.payment.security", "com.payment.common"})
 public class IssuerServiceApplication {
     public static void main(String[] args) {
         SpringApplication.run(IssuerServiceApplication.class, args);

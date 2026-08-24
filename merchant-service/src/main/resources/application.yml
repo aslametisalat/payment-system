@@ -26,8 +26,33 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+# DEMO secret only - must match every other service's value (all issued
+# tokens are verified against it). See security-service's application.yml.
+payment:
+  security:
+    jwt-secret: "demo-only-hmac-signing-secret-replace-with-real-key-vault-value-1234567890"
+
 management:
   endpoints:
     web:
       exposure:
         include: "*"
+  tracing:
+    sampling:
+      # 100% here so every request in this small learning stack is traced;
+      # a real system samples a fraction (often 1-10%) to control overhead.
+      probability: 1.0
+  zipkin:
+    tracing:
+      # No Zipkin server runs anywhere in this project - the exporter fails
+      # to reach it silently (a periodic WARN in the log, nothing more) and
+      # every request still gets a trace ID that's visible right here in
+      # this service's own logs (see logging.pattern.level below) and, more
+      # usefully, in every other service's logs too, since Feign propagates
+      # it automatically. Point this at a real Zipkin/Tempo/Jaeger endpoint
+      # to get the trace-waterfall UI as well.
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"

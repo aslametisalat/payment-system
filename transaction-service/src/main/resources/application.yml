@@ -8,7 +8,7 @@ spring:
     url: jdbc:h2:mem:transactiondb
     driver-class-name: org.h2.Driver
     username: sa
-    password: 
+    password:
   h2:
     console:
       enabled: true
@@ -16,14 +16,86 @@ spring:
     hibernate:
       ddl-auto: create-drop
     show-sql: true
+  artemis:
+    # This service hosts the broker (see EmbeddedBrokerConfig) but still
+    # connects to it as a plain "native" TCP client, same as every other
+    # service that publishes/consumes on it - no special in-process
+    # treatment.
+    mode: native
+    broker-url: tcp://localhost:61616
 
 eureka:
   client:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+payment:
+  security:
+    jwt-secret: "demo-only-hmac-signing-secret-replace-with-real-key-vault-value-1234567890"
+
+# Feign-level connect/read timeouts, per downstream service - the first
+# line of resilience defense: fail fast instead of hanging on a slow
+# dependency. See TransactionProcessingService for the CircuitBreaker/Retry
+# layer built on top of this.
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 2000
+        readTimeout: 3000
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+    instances:
+      merchant-service:
+        base-config: default
+      acquirer-service:
+        base-config: default
+      network-service:
+        base-config: default
+      issuer-service:
+        base-config: default
+  retry:
+    instances:
+      # Only wired up for hops that are safe to repeat automatically:
+      # network-service does a pure read (no persistence at all), and
+      # acquirer-service's fraud check is a stateless computation. Retrying
+      # merchant-service (mutates currentDailyVolume) or issuer-service
+      # (mutates the card's available balance) here would risk double-
+      # counting a merchant's daily volume or double-authorizing funds -
+      # exactly the class of bug idempotency keys exist to prevent, and
+      # this project only has that protection on the POS -> transaction-
+      # service hop (see Transaction.idempotencyKey), not on these four
+      # downstream calls.
+      network-service:
+        max-attempts: 2
+        wait-duration: 200ms
+      acquirer-service:
+        max-attempts: 2
+        wait-duration: 200ms
+
 management:
   endpoints:
     web:
       exposure:
         include: "*"
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      # No Zipkin server runs anywhere in this project - see
+      # merchant-service's application.yml for why that's fine.
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"

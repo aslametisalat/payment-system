@@ -18,14 +18,20 @@ import com.payment.pos.model.POSTransactionResult;
 import com.payment.security.service.EMVCryptogramService;
 import com.payment.security.service.MACService;
 import com.payment.security.service.PINBlockService;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Random;
+import java.util.function.Supplier;
 
 @Service
 @Slf4j
@@ -40,12 +46,25 @@ public class POSTransactionService {
     private final ReceiptService receiptService;
     private final TransactionClient transactionClient;
     private final Random random;
-    
-    // Encryption keys (in real system, these come from HSM)
-    private static final String PIN_ENCRYPTION_KEY = "0123456789ABCDEF";
-    private static final String MAC_KEY = "FEDCBA9876543210";
-    private static final String CARD_MASTER_KEY = "0123456789ABCDEF";
-    
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RetryRegistry retryRegistry;
+
+    // DEMO keys only, read from config instead of hardcoded in source so
+    // they aren't literally checked into version control - a real terminal
+    // pulls these from an HSM/key-management service at runtime and never
+    // has them in application code or config at all. Must match
+    // issuer-service's payment.security.* values (pin-decryption-key here
+    // is issuer-service's counterpart), since this simulates the two ends
+    // of the same symmetric key.
+    @Value("${payment.security.pin-encryption-key}")
+    private String pinEncryptionKey;
+
+    @Value("${payment.security.mac-key}")
+    private String macKey;
+
+    @Value("${payment.security.card-master-key}")
+    private String cardMasterKey;
+
     /**
      * Process complete POS transaction with full security
      */
@@ -82,7 +101,7 @@ public class POSTransactionService {
                         request.getPin(), 
                         cardData.getPan()
                 );
-                encryptedPIN = pinBlockService.encryptPINBlock(pinBlock, PIN_ENCRYPTION_KEY);
+                encryptedPIN = pinBlockService.encryptPINBlock(pinBlock, pinEncryptionKey);
                 log.debug("  ✓ PIN encrypted");
             }
             
@@ -116,24 +135,31 @@ public class POSTransactionService {
             // still excluded from what gets hashed.
             message.setField(64, "");
             String messageString = messageBuilder.messageToString(message);
-            String mac = macService.generateMAC(messageString, MAC_KEY);
+            String mac = macService.generateMAC(messageString, macKey);
             message.setField(64, mac);
             log.debug("  ✓ MAC added");
 
             // Step 6: Send to authorization - a real HTTP call through the
             // rest of the payment system (transaction-service, which in turn
-            // calls merchant/acquirer/network/issuer-service).
+            // calls merchant/acquirer/network/issuer-service). STAN + RRN
+            // were generated once, above, before any retry could happen -
+            // reusing them as the idempotency key is exactly what those two
+            // ISO 8583 fields are for in a real network: letting the far end
+            // recognize a retried authorization as the same one, instead of
+            // authorizing the cardholder's card twice for one purchase.
             log.info("→ Step 6: Sending authorization request to transaction-service...");
-            TransactionResponse txnResponse = transactionClient.authorize(
-                    TransactionRequest.builder()
-                            .merchantId(request.getMerchantId())
-                            .cardNumber(cardData.getPan())
-                            .cvv(request.getCvv())
-                            .terminalId(request.getTerminalId())
-                            .type(TransactionType.PURCHASE)
-                            .amount(BigDecimal.valueOf(request.getAmount(), 2)) // cents -> dollars
-                            .currency("USD")
-                            .build());
+            String idempotencyKey = request.getTerminalId() + "-" + stan + "-" + rrn;
+            TransactionRequest authRequest = TransactionRequest.builder()
+                    .merchantId(request.getMerchantId())
+                    .cardNumber(cardData.getPan())
+                    .cvv(request.getCvv())
+                    .terminalId(request.getTerminalId())
+                    .type(TransactionType.PURCHASE)
+                    .amount(BigDecimal.valueOf(request.getAmount(), 2)) // cents -> dollars
+                    .currency("USD")
+                    .idempotencyKey(idempotencyKey)
+                    .build();
+            TransactionResponse txnResponse = resilientAuthorize(authRequest);
 
             // Step 7: Process the response
             boolean approved = txnResponse.getStatus() == TransactionStatus.AUTHORIZED;
@@ -184,6 +210,26 @@ public class POSTransactionService {
         }
     }
     
+    /**
+     * Calls transaction-service through a circuit breaker + retry, the same
+     * way a real terminal's link to its acquirer is protected: if
+     * transaction-service is slow or down, repeatedly failing calls trip
+     * the breaker open so this terminal fails fast (with a clean decline)
+     * instead of hanging every subsequent transaction waiting on a dead
+     * dependency. The one retry attempt is only safe because the request
+     * carries the STAN/RRN-derived idempotency key set by the caller -
+     * transaction-service recognizes a retried request and returns the
+     * original result instead of authorizing twice.
+     */
+    private TransactionResponse resilientAuthorize(TransactionRequest request) {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("transaction-service");
+        Retry retry = retryRegistry.retry("transaction-service");
+        Supplier<TransactionResponse> call = () -> transactionClient.authorize(request);
+        Supplier<TransactionResponse> withCircuitBreaker = CircuitBreaker.decorateSupplier(circuitBreaker, call);
+        Supplier<TransactionResponse> resilient = Retry.decorateSupplier(retry, withCircuitBreaker);
+        return resilient.get();
+    }
+
     private String generateEMVData(Long amount) {
         EMVTransactionData emvTxn = EMVTransactionData.builder()
                 .amount(amount)
@@ -195,7 +241,7 @@ public class POSTransactionService {
                 .atc(getNextATC())
                 .build();
         
-        String arqc = emvService.generateARQC(emvTxn, CARD_MASTER_KEY);
+        String arqc = emvService.generateARQC(emvTxn, cardMasterKey);
         return buildEMVTags(arqc, emvTxn);
     }
     

@@ -20,4 +20,5 @@ public class TransactionRequest {
     private TransactionType type;
     private BigDecimal amount;
     private String currency;
+    private String idempotencyKey;
 }

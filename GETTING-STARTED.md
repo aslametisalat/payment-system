@@ -51,10 +51,20 @@ curl http://localhost:8080/actuator/health
 
 ## 🎯 First Transaction - Step by Step
 
+### Step 0: Get an auth token
+Every service now rejects `/api/**` calls without a valid token (see
+"🔒 Production-Hardening Features" below) - get one first and reuse it for
+every curl command in this guide:
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8089/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"demo123"}' | python3 -c "import json,sys;print(json.load(sys.stdin)['accessToken'])")
+```
+
 ### Step 1: Create a Merchant
 ```bash
 curl -X POST http://localhost:8080/api/merchants \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "businessName": "My Coffee Shop",
     "email": "shop@example.com",
@@ -72,13 +82,14 @@ curl -X POST http://localhost:8080/api/merchants \
 ### Step 2: Activate the Merchant
 ```bash
 # Replace {MERCHANT_ID} with the id from Step 1
-curl -X PUT "http://localhost:8080/api/merchants/{MERCHANT_ID}/status?status=ACTIVE"
+curl -X PUT "http://localhost:8080/api/merchants/{MERCHANT_ID}/status?status=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Step 3: Issue a Test Card
 ```bash
 curl -X POST http://localhost:8080/api/cards \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "cardholderName": "John Doe",
     "cardType": "CREDIT",
@@ -104,7 +115,7 @@ To get the actual card number and CVV (needed for testing):
 ```bash
 # Replace values with your actual data
 curl -X POST http://localhost:8080/api/transactions/authorize \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "merchantId": "your-merchant-id",
     "cardNumber": "card-number-from-database",
@@ -128,29 +139,31 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 
 ## 📊 Explore the System
 
+All of these need the same `-H "Authorization: Bearer $TOKEN"` from Step 0 above.
+
 ### View All Merchants
 ```bash
-curl http://localhost:8080/api/merchants
+curl http://localhost:8080/api/merchants -H "Authorization: Bearer $TOKEN"
 ```
 
 ### View All Cards
 ```bash
-curl http://localhost:8080/api/cards
+curl http://localhost:8080/api/cards -H "Authorization: Bearer $TOKEN"
 ```
 
 ### View All Transactions
 ```bash
-curl http://localhost:8080/api/transactions
+curl http://localhost:8080/api/transactions -H "Authorization: Bearer $TOKEN"
 ```
 
 ### View Merchant's Transactions
 ```bash
-curl http://localhost:8080/api/transactions/merchant/{MERCHANT_ID}
+curl http://localhost:8080/api/transactions/merchant/{MERCHANT_ID} -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Generate Reports
 ```bash
-curl http://localhost:8080/api/reports/transactions/{MERCHANT_ID}
+curl http://localhost:8080/api/reports/transactions/{MERCHANT_ID} -H "Authorization: Bearer $TOKEN"
 ```
 
 ## 🔍 Monitoring & Debugging
@@ -197,7 +210,7 @@ tail -f logs/merchant-service.log
 ```bash
 # Try to charge more than available balance
 curl -X POST http://localhost:8080/api/transactions/authorize \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "merchantId": "{MERCHANT_ID}",
     "cardNumber": "{CARD_NUMBER}",
@@ -213,7 +226,7 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 ```bash
 # Use wrong CVV
 curl -X POST http://localhost:8080/api/transactions/authorize \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "merchantId": "{MERCHANT_ID}",
     "cardNumber": "{CARD_NUMBER}",
@@ -228,11 +241,11 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
 ### Scenario 4: Block and Try Card
 ```bash
 # Block the card
-curl -X PUT http://localhost:8080/api/cards/{CARD_ID}/block
+curl -X PUT http://localhost:8080/api/cards/{CARD_ID}/block -H "Authorization: Bearer $TOKEN"
 
 # Try to use it
 curl -X POST http://localhost:8080/api/transactions/authorize \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{
     "merchantId": "{MERCHANT_ID}",
     "cardNumber": "{CARD_NUMBER}",
@@ -243,6 +256,75 @@ curl -X POST http://localhost:8080/api/transactions/authorize \
   }'
 # Expected: Status = DECLINED, Message = "Card is blocked"
 ```
+
+## 🔒 Production-Hardening Features
+
+Six things a real payment platform needs that a "happy path" demo usually
+skips - all actually wired up and running here, with a dummy/demo value
+standing in wherever real infrastructure or credentials would normally go:
+
+1. **Circuit breakers + retry (Resilience4j) + Feign timeouts.** Every
+   Feign call to another service goes through a per-target circuit breaker
+   (`TransactionProcessingService.callStep()`, `POSTransactionService
+   .resilientAuthorize()`), so a dead dependency fails fast instead of
+   hanging every request behind it. Retries are only enabled on hops that
+   are actually safe to repeat (`network-service`, `acquirer-service` -
+   both side-effect-free; see the comment above
+   `RETRYABLE_TARGETS` in `TransactionProcessingService` for why
+   `merchant-service`/`issuer-service` are deliberately excluded).
+   **Try it:** kill `acquirer-service` mid-session and submit a few
+   transactions - the dashboard's step trace will show `FAILED` at
+   `acquirer-service` with a circuit-breaker message once it trips open,
+   instead of every request hanging for the full Feign timeout.
+
+2. **Idempotency keys.** `POSTransactionService` derives a key from
+   STAN+RRN (the real ISO 8583 fields meant for exactly this) and sends it
+   on every authorize call; `TransactionProcessingService` recognizes a
+   repeated key and returns the original result instead of authorizing
+   twice - what actually makes retrying step 1 safe.
+
+3. **Externalized crypto keys.** `PIN_ENCRYPTION_KEY`/`MAC_KEY`/
+   `CARD_MASTER_KEY` used to be `private static final String` literals in
+   `POSTransactionService.java` and `CardService.java`. They're now
+   `payment.security.*` values in each service's `application.yml` -
+   still demo values (a real system pulls these from an HSM/vault at
+   runtime, never a YAML file), but no longer hardcoded in source.
+
+4. **Distributed tracing (Micrometer Tracing + Brave).** Every request gets
+   a trace ID that's the same across every service it passes through - POS
+   → transaction-service → merchant/acquirer/network/issuer-service all
+   log the identical ID (see each service's console output:
+   `[traceId,spanId]`). No Zipkin server runs anywhere in this project (the
+   exporter fails to reach one silently), but the trace ID in the logs is
+   the actual payoff - `grep <traceId> logs/*.log` shows you one
+   transaction's whole path across every service, in order, instead of
+   guessing from timestamps.
+
+5. **Async messaging (embedded ActiveMQ Artemis).** `transaction-service`
+   hosts a real broker (`EmbeddedBrokerConfig`) and publishes a
+   `TransactionCompletedEvent` after every transaction reaches a terminal
+   state, off the synchronous authorization path.
+   `settlement-service`/`reporting-service`/`notification-service` each
+   consume it independently (one queue per consumer, so all three get
+   every event - see the comment on `TRANSACTION_COMPLETED_QUEUES`).
+   `notification-service`'s listener calls a `sendTransactionAlert()`
+   method that existed before this but was dead code, never called by
+   anything. `reporting-service` exposes what it builds from these events
+   at `GET /api/reports/live-activity`.
+
+6. **JWT authentication.** Every `/api/**` endpoint on every service now
+   rejects requests without a valid bearer token (`JwtAuthenticationFilter`,
+   shared via the `common` module and component-scanned into each service).
+   `security-service` issues demo tokens (`POST /api/auth/token`, username
+   `demo` / password `demo123` - see `AuthController`'s comment for why
+   that's on purpose, not an oversight). `transaction-service` and
+   `pos-terminal-service` relay the caller's token onto their own outgoing
+   Feign calls (`FeignAuthRelayConfig`), so one token authenticates a
+   request across the entire chain - POS → transaction → merchant/
+   acquirer/network/issuer - not just the first hop. There's no
+   role/permission model (every valid token can call every endpoint) -
+   this stops at "is there a validly-signed token," matching this
+   project's single-tenant demo scope.
 
 ## 🚀 Advanced Usage
 
@@ -411,23 +493,35 @@ cd ../issuer-service && mvn clean install
 - Add new card networks
 
 ### Advanced Level
-- Implement JWT authentication
+- ✅ JWT authentication (see "🔒 Production-Hardening Features" above)
+- ✅ Circuit breakers (Resilience4j) (see "🔒 Production-Hardening Features" above)
+- ✅ Async messaging (embedded ActiveMQ Artemis) (see "🔒 Production-Hardening Features" above)
 - Add Redis caching
-- Implement Kafka messaging
-- Add circuit breakers (Resilience4j)
+- Swap the embedded broker for a real Kafka/RabbitMQ cluster
+- Add a real identity provider (Okta/Auth0/Keycloak) behind `AuthController`
 - Deploy to Kubernetes
-- Add monitoring (Prometheus + Grafana)
+- Point `management.zipkin.tracing.endpoint` at a real Zipkin/Tempo/Jaeger collector
 - Implement fraud detection
 - Add integration tests
 
 ## 💡 Common Questions
 
 **Q: Can I use this in production?**  
-A: This is a learning project. For production, you need:
+A: This is a learning project. It now has *demo-grade* versions of several
+things a real deployment needs (see "🔒 Production-Hardening Features"
+above: JWT auth, circuit breakers/retries, an embedded message broker,
+distributed tracing, idempotency keys, externalized keys) - the mechanics
+are real, but every credential/secret/broker is a local stand-in. Before
+production you'd still need:
 - PostgreSQL/MySQL instead of H2
-- Security (JWT, OAuth2)
+- A real identity provider behind `security-service`'s `AuthController`
+  (Okta/Auth0/Keycloak), not one hardcoded demo login
+- Real secrets/key management (HSM or vault) instead of `application.yml`
+  values
+- A real Kafka/RabbitMQ cluster instead of the embedded Artemis broker
+- A real Zipkin/Tempo/Jaeger collector instead of `management.zipkin
+  .tracing.endpoint` pointing at nothing
 - Redis caching
-- Kafka for messaging
 - Proper logging (ELK stack)
 - Monitoring (Prometheus, Grafana)
 - Load balancers

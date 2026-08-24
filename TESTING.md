@@ -115,7 +115,7 @@ Both are visible as comments at the fix sites in
 ## Running the real end-to-end flow
 
 Everything above tests one hop at a time with mocks standing in for the
-services on either side. You can also run the real chain — seven separate
+services on either side. You can also run the real chain — eight separate
 JVMs, no mocks — and watch a transaction actually travel:
 
 ```
@@ -133,17 +133,24 @@ are now real `@FeignClient` calls (see `MerchantClient`/`AcquirerClient`/
 `pos-terminal-service`), resolved through Eureka at runtime just like
 `issuer-service`'s client always was.
 
+Every request through this chain also now needs a bearer token
+(`security-service` issues demo ones) and gets a circuit-breaker/retry
+layer, a shared trace ID, and an async event published on completion - see
+"Production-hardening: what's demo-real vs. actually fake" below for what
+all of that means and how to see each one.
+
 ### Starting it
 
 ```bash
 mvn clean install                     # build everything once
 
 cd service-registry && mvn spring-boot:run &   # wait for :8761/actuator/health
+cd security-service && mvn spring-boot:run &   # issues the tokens every other service now requires
 cd merchant-service && mvn spring-boot:run &
 cd acquirer-service && mvn spring-boot:run &
 cd network-service && mvn spring-boot:run &
 cd issuer-service && mvn spring-boot:run &
-cd transaction-service && mvn spring-boot:run &
+cd transaction-service && mvn spring-boot:run &   # also hosts the embedded message broker, port 61616
 cd pos-terminal-service && mvn spring-boot:run &
 ```
 
@@ -152,6 +159,19 @@ propagate to every client before sending traffic — a service can be "up"
 (its own `/health` returns 200) well before other services' local Eureka
 caches know it exists, which shows up as `Load balancer does not contain an
 instance for the service ...`.
+
+Every `/api/**` call to any of these now needs a token first:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8089/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"demo123"}' | python3 -c "import json,sys;print(json.load(sys.stdin)['accessToken'])")
+```
+
+Pass it as `-H "Authorization: Bearer $TOKEN"` on any curl command below -
+without it, every service returns `401`. (The dashboard fetches its own
+token automatically; Postman's Folder 0 does the same into `{{jwtToken}}`;
+`test-e2e.sh` does it as its first step.)
 
 ### Driving a transaction through it
 
@@ -220,26 +240,37 @@ services itself; if something's down it tells you which one.
 What it's actually doing, if you want to run it by hand or adapt it:
 
 ```bash
+# 0. Get a token - everything below needs it
+TOKEN=$(curl -s -X POST http://localhost:8089/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"demo123"}' | python3 -c "import json,sys;print(json.load(sys.stdin)['accessToken'])")
+
 # 1. Create + activate a merchant
 MERCHANT_ID=$(curl -s -X POST http://localhost:8081/api/merchants \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{"businessName":"Coffee Shop","email":"shop@coffee.com","phone":"+12025550123",
        "address":"123 Main St","taxId":"12-3456789","merchantCategoryCode":"5814",
        "dailyLimit":10000,"monthlyLimit":300000}' | python3 -c "import json,sys;print(json.load(sys.stdin)['id'])")
-curl -X PUT "http://localhost:8081/api/merchants/${MERCHANT_ID}/status?status=ACTIVE"
+curl -X PUT "http://localhost:8081/api/merchants/${MERCHANT_ID}/status?status=ACTIVE" -H "Authorization: Bearer $TOKEN"
 
 # 2. Issue a card (full PAN/CVV only ever come back here, at issuance)
 curl -X POST http://localhost:8083/api/cards \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d '{"cardholderName":"John Doe","cardType":"CREDIT","network":"VISA","creditLimit":5000}'
 
 # 3. Run a transaction through the whole chain
 curl -X POST http://localhost:8091/api/pos/transaction \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d "{\"terminalId\":\"TERM0001\",\"merchantId\":\"${MERCHANT_ID}\",\"merchantName\":\"Coffee Shop\",
        \"amount\":2599,\"cardReadMethod\":\"CHIP\",\"requirePIN\":true,\"pin\":\"1234\",
        \"cardNumber\":\"<from step 2>\",\"expiryDate\":\"2812\",\"cvv\":\"<from step 2>\"}"
 ```
+
+That one token authenticates the *entire* chain, not just this first call -
+`pos-terminal-service` and `transaction-service` both relay it onto their
+own outgoing Feign calls (`FeignAuthRelayConfig` in each), so
+merchant/acquirer/network/issuer-service see it too, without you doing
+anything extra.
 
 Then `tail -f logs/*.log` and watch the same request ID's amount and
 merchant show up in `merchant-service`, `acquirer-service`,
@@ -278,3 +309,30 @@ and driving a transaction through it surfaced three more:
    returned (`"Daily limit exceeded"`). The receipt and API response now
    prefer the specific message, falling back to the generic code
    description only when no specific message comes back.
+
+## Production-hardening: what's demo-real vs. actually fake
+
+Six things a real payment platform needs that this project didn't have
+until they were added deliberately - each one's mechanics are real and
+running, with a dummy/demo value standing in for whatever real
+infrastructure or credentials a production deployment would use instead:
+
+| Feature | What's real | What's a demo stand-in |
+|---|---|---|
+| **Circuit breakers + retry** (Resilience4j) | Per-target breakers on every Feign call (`TransactionProcessingService.callStep()`, `POSTransactionService.resilientAuthorize()`); retries only where side-effect-free (see `RETRYABLE_TARGETS`) | Thresholds tuned for a demo (small sliding windows), not load-tested |
+| **Idempotency keys** | STAN+RRN-derived key on every POS→transaction-service call; a repeat returns the original result, not a second authorization | — this one's just real |
+| **Externalized crypto keys** | Keys read from `application.yml` (`payment.security.*`), not hardcoded in `.java` files | Still plaintext in a config file, not an HSM/vault |
+| **Distributed tracing** (Micrometer Tracing + Brave) | Real trace ID shared across every service a request passes through, visible in each service's logs | No Zipkin/Tempo/Jaeger server running to visualize it - `management.zipkin.tracing.endpoint` points at nothing |
+| **Async messaging** (ActiveMQ Artemis) | Real broker, real JMS queues, real async consumers (`settlement`/`reporting`/`notification`-service) reacting to `TransactionCompletedEvent` off the auth path | The broker is embedded inside `transaction-service`'s own JVM (`EmbeddedBrokerConfig`), not a standalone cluster |
+| **JWT authentication** | Every `/api/**` endpoint on every service rejects invalid/missing tokens (`JwtAuthenticationFilter`); tokens relay across the whole Feign chain (`FeignAuthRelayConfig`) | `security-service`'s `AuthController` has one hardcoded demo login, not a real identity provider; no role/permission model |
+
+**Try each one live:**
+- Kill `acquirer-service` mid-session and submit a transaction through the
+  dashboard - the step trace shows `FAILED` at `acquirer-service` with a
+  circuit-breaker message once it trips open.
+- `grep <traceId> logs/*.log` (copy a trace ID from any service's console
+  output) to see one transaction's path across every service it touched.
+- `GET http://localhost:8087/api/reports/live-activity` (with a token) to
+  see counts built entirely from async events, not a direct query.
+- Delete the `Authorization` header from any Postman request or dashboard
+  call and re-send it - every service now returns `401`.

@@ -16,12 +16,28 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
+payment:
+  security:
+    jwt-secret: "demo-only-hmac-signing-secret-replace-with-real-key-vault-value-1234567890"
+
 management:
   endpoints:
     web:
       exposure:
         include: "*"
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      # No Zipkin server runs anywhere in this project - see
+      # merchant-service's application.yml for why that's fine: every
+      # request still gets a trace ID visible in this service's own logs
+      # and (via Feign's automatic propagation) every other service's too.
+      endpoint: http://localhost:9411/api/v2/spans
 
 logging:
   level:
     com.payment.acquirer: DEBUG
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"

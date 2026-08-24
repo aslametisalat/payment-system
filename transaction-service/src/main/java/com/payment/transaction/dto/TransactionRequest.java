@@ -26,4 +26,10 @@ public class TransactionRequest {
     private BigDecimal amount;
     
     private String currency = "USD";
+
+    // Optional: lets a caller safely retry the same authorize call (e.g.
+    // after a timeout where it can't tell if the first attempt landed)
+    // without risking a duplicate authorization - see
+    // TransactionProcessingService.processTransaction().
+    private String idempotencyKey;
 }

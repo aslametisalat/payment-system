@@ -1,297 +1,707 @@
 {
-  "info": {
-    "name": "Payment System - Call Every Controller Directly",
-    "description": "Hits each service's controller directly - not just through the orchestrated flow - so you can see what each hop in the authorization chain actually does on its own. Folder 2 is the interesting one: it calls Merchant, Acquirer, Network, and Issuer's controllers one at a time, the same way transaction-service does internally. Folder 3 shows the same thing happening automatically when you call the real entry points.\n\nStart the services first (service-registry, merchant-service, acquirer-service, network-service, issuer-service, transaction-service, pos-terminal-service - see GETTING-STARTED.md or run ./start-all.sh), then run Folder 1 top to bottom once to populate merchantId/cardNumber/cvv, then explore Folders 2-4 in any order.",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-  },
-  "variable": [
-    { "key": "merchantUrl", "value": "http://localhost:8081" },
-    { "key": "acquirerUrl", "value": "http://localhost:8082" },
-    { "key": "issuerUrl", "value": "http://localhost:8083" },
-    { "key": "networkUrl", "value": "http://localhost:8084" },
-    { "key": "transactionUrl", "value": "http://localhost:8085" },
-    { "key": "posUrl", "value": "http://localhost:8091" },
-    { "key": "merchantId", "value": "" },
-    { "key": "cardId", "value": "" },
-    { "key": "cardNumber", "value": "" },
-    { "key": "cvv", "value": "" },
-    { "key": "transactionId", "value": "" }
-  ],
-  "item": [
-    {
-      "name": "1. Setup (run these three first)",
-      "item": [
-        {
-          "name": "Create Merchant",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('merchantId', body.id);",
-                  "pm.test('merchant created', () => pm.response.code === 201);",
-                  "pm.test('status is PENDING_VERIFICATION', () => body.status === 'PENDING_VERIFICATION');"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Coffee Shop\",\n  \"email\": \"shop-{{$randomInt}}@coffee.com\",\n  \"phone\": \"+12025550123\",\n  \"address\": \"123 Main Street\",\n  \"taxId\": \"12-3456789-{{$randomInt}}\",\n  \"merchantCategoryCode\": \"5814\",\n  \"dailyLimit\": 10000,\n  \"monthlyLimit\": 300000\n}"
-            },
-            "url": { "raw": "{{merchantUrl}}/api/merchants", "host": ["{{merchantUrl}}"], "path": ["api", "merchants"] },
-            "description": "MerchantController.createMerchant(). New merchants start PENDING_VERIFICATION - nothing can transact against them until activated below."
-          }
-        },
-        {
-          "name": "Activate Merchant",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "pm.test('status is ACTIVE', () => body.status === 'ACTIVE');"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "PUT",
-            "url": {
-              "raw": "{{merchantUrl}}/api/merchants/{{merchantId}}/status?status=ACTIVE",
-              "host": ["{{merchantUrl}}"], "path": ["api", "merchants", "{{merchantId}}", "status"],
-              "query": [{ "key": "status", "value": "ACTIVE" }]
-            },
-            "description": "MerchantController.updateStatus(). Every merchant-limit check downstream fails until this runs."
-          }
-        },
-        {
-          "name": "Issue Card",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('cardId', body.id);",
-                  "pm.collectionVariables.set('cardNumber', body.cardNumber);",
-                  "pm.collectionVariables.set('cvv', body.cvv);",
-                  "pm.test('card issued', () => pm.response.code === 201);",
-                  "pm.test('full PAN/CVV returned at issuance', () => body.cardNumber && body.cardNumber.length === 16 && body.cvv);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"cardholderName\": \"John Doe\",\n  \"cardType\": \"CREDIT\",\n  \"network\": \"VISA\",\n  \"creditLimit\": 5000\n}"
-            },
-            "url": { "raw": "{{issuerUrl}}/api/cards", "host": ["{{issuerUrl}}"], "path": ["api", "cards"] },
-            "description": "IssuerController.issueCard(). This is the ONLY endpoint that ever returns the full, unmasked card number and CVV - every other card endpoint masks them. That's why cardNumber/cvv get captured here into collection variables for the rest of the requests to use."
-          }
-        }
-      ]
-    },
-    {
-      "name": "2. Call Each Controller Directly (understand one hop at a time)",
-      "item": [
-        {
-          "name": "Merchant - Validate For Transaction",
-          "request": {
-            "method": "POST",
-            "url": {
-              "raw": "{{merchantUrl}}/api/merchants/{{merchantId}}/validate?amount=25.99",
-              "host": ["{{merchantUrl}}"], "path": ["api", "merchants", "{{merchantId}}", "validate"],
-              "query": [{ "key": "amount", "value": "25.99" }]
-            },
-            "description": "MerchantController.validateForTransaction(). Checks the merchant is ACTIVE and that this amount wouldn't blow past its daily/monthly limit. This is the FIRST thing transaction-service calls before anything else - a merchant that fails this never even reaches the acquirer."
-          }
-        },
-        {
-          "name": "Acquirer - Process Acquiring (fraud/velocity check)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"amount\": 25.99,\n  \"terminalId\": \"TERM0001\"\n}"
-            },
-            "url": { "raw": "{{acquirerUrl}}/api/acquirers/process", "host": ["{{acquirerUrl}}"], "path": ["api", "acquirers", "process"] },
-            "description": "AcquirerController.processAcquiring() - the merchant's bank running fraud/velocity screening. Response includes fraudScore so you can see the number behind the approve/decline call. Note: with today's scoring formula the max reachable score is 49 against an 80-point decline threshold, so this always approves - worth noticing while you explore."
-          }
-        },
-        {
-          "name": "Network - Route Transaction",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"amount\": 25.99\n}"
-            },
-            "url": { "raw": "{{networkUrl}}/api/network/route", "host": ["{{networkUrl}}"], "path": ["api", "network", "route"] },
-            "description": "NetworkController.routeTransaction() - identifies the card network from its first digit (BIN) and calculates the network's interchange fee. Try changing cardNumber's first digit (4=VISA, 5=MASTERCARD, 3=AMEX, anything else=LOCAL) and re-running to see the fee change."
-          }
-        },
-        {
-          "name": "Network - Identify Card Network (GET)",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{networkUrl}}/api/network/identify/{{cardNumber}}",
-              "host": ["{{networkUrl}}"], "path": ["api", "network", "identify", "{{cardNumber}}"]
-            },
-            "description": "NetworkController.identifyNetwork() - just the BIN lookup, no fee calculation."
-          }
-        },
-        {
-          "name": "Issuer - Authorize (basic, no PIN/MAC/EMV)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"amount\": 25.99,\n  \"currency\": \"USD\",\n  \"merchantId\": \"{{merchantId}}\"\n}"
-            },
-            "url": { "raw": "{{issuerUrl}}/api/cards/authorize", "host": ["{{issuerUrl}}"], "path": ["api", "cards", "authorize"] },
-            "description": "IssuerController.authorize() - the cardholder's own bank making the final call: card active? not blocked? CVV correct? enough available balance? This is the actual last-mile decision every other hop in the chain leads up to. Try a wrong CVV or an amount over 5000 (the card's credit limit) to see it decline."
-          }
-        },
-        {
-          "name": "Issuer - Block Card",
-          "request": {
-            "method": "PUT",
-            "url": { "raw": "{{issuerUrl}}/api/cards/{{cardId}}/block", "host": ["{{issuerUrl}}"], "path": ["api", "cards", "{{cardId}}", "block"] },
-            "description": "Block the card, then re-run 'Issuer - Authorize' above to see it decline with 'Card is blocked'."
-          }
-        },
-        {
-          "name": "Issuer - Unblock Card",
-          "request": {
-            "method": "PUT",
-            "url": { "raw": "{{issuerUrl}}/api/cards/{{cardId}}/unblock", "host": ["{{issuerUrl}}"], "path": ["api", "cards", "{{cardId}}", "unblock"] },
-            "description": "Undo the block above."
-          }
-        }
-      ]
-    },
-    {
-      "name": "3. Full Orchestrated Flow (transaction-service calls all four above for you)",
-      "item": [
-        {
-          "name": "Transaction - Authorize (approved example)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "const body = pm.response.json();",
-                  "pm.collectionVariables.set('transactionId', body.id);",
-                  "pm.test('AUTHORIZED', () => body.status === 'AUTHORIZED');"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"terminalId\": \"TERM0001\",\n  \"type\": \"PURCHASE\",\n  \"amount\": 25.99,\n  \"currency\": \"USD\"\n}"
-            },
-            "url": { "raw": "{{transactionUrl}}/api/transactions/authorize", "host": ["{{transactionUrl}}"], "path": ["api", "transactions", "authorize"] },
-            "description": "TransactionController.authorize() - the real orchestrated entry point. Internally this calls the exact same four controllers from Folder 2, in order: Merchant -> Acquirer -> Network -> Issuer, stopping at whichever one says no. Watch each service's own console/log while this runs to see all four fire within milliseconds of each other."
-          }
-        },
-        {
-          "name": "Transaction - Authorize (declined: exceeds daily limit)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"terminalId\": \"TERM0001\",\n  \"type\": \"PURCHASE\",\n  \"amount\": 9999.00,\n  \"currency\": \"USD\"\n}"
-            },
-            "url": { "raw": "{{transactionUrl}}/api/transactions/authorize", "host": ["{{transactionUrl}}"], "path": ["api", "transactions", "authorize"] },
-            "description": "Same endpoint, an amount that pushes the merchant over its $10,000 daily limit. Returns 200 OK with status: DECLINED and responseCode 03 - declines are a normal business outcome here, not an HTTP error (see TESTING.md for why that matters for Feign callers like the POS terminal)."
-          }
-        },
-        {
-          "name": "Transaction - Get By Id",
-          "request": {
-            "method": "GET",
-            "url": { "raw": "{{transactionUrl}}/api/transactions/{{transactionId}}", "host": ["{{transactionUrl}}"], "path": ["api", "transactions", "{{transactionId}}"] },
-            "description": "Fetch the persisted record back independently of the authorize response - proves it actually landed in the database, with the acquirerId/networkId/issuerId trail populated."
-          }
-        },
-        {
-          "name": "Transaction - Get All For Merchant",
-          "request": {
-            "method": "GET",
-            "url": { "raw": "{{transactionUrl}}/api/transactions/merchant/{{merchantId}}", "host": ["{{transactionUrl}}"], "path": ["api", "transactions", "merchant", "{{merchantId}}"] }
-          }
-        },
-        {
-          "name": "Transaction - Refund",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{transactionUrl}}/api/transactions/{{transactionId}}/refund", "host": ["{{transactionUrl}}"], "path": ["api", "transactions", "{{transactionId}}", "refund"] },
-            "description": "Only works on an AUTHORIZED/CAPTURED/SETTLED transaction - run the approved request above first. Returns 409 if the transaction isn't in a refundable state."
-          }
-        }
-      ]
-    },
-    {
-      "name": "4. POS Terminal (the real card-present simulation)",
-      "item": [
-        {
-          "name": "POS - Chip + PIN Purchase (approved)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 2599,\n  \"cardReadMethod\": \"CHIP\",\n  \"requirePIN\": true,\n  \"pin\": \"1234\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
-            },
-            "url": { "raw": "{{posUrl}}/api/pos/transaction", "host": ["{{posUrl}}"], "path": ["api", "pos", "transaction"] },
-            "description": "POSController.processTransaction() - the terminal itself: reads the card, formats+encrypts a PIN block, generates an EMV cryptogram, builds an ISO 8583 message, signs it with a MAC, THEN calls Transaction - Authorize above over real HTTP (not simulated). amount is in CENTS here, unlike every other endpoint in this collection which uses dollars - that's a real inconsistency between this simulated terminal and the rest of the system, worth noticing. The response includes a printable receipt string."
-          }
-        },
-        {
-          "name": "POS - Chip + PIN Purchase (declined: exceeds daily limit)",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 999900,\n  \"cardReadMethod\": \"CHIP\",\n  \"requirePIN\": true,\n  \"pin\": \"1234\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
-            },
-            "url": { "raw": "{{posUrl}}/api/pos/transaction", "host": ["{{posUrl}}"], "path": ["api", "pos", "transaction"] },
-            "description": "$9,999.00 in cents. The receipt field in the response will show the SPECIFIC decline reason from transaction-service (\"Daily limit exceeded\"), not a generic code description."
-          }
-        },
-        {
-          "name": "POS - Magnetic Stripe, No PIN",
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 1500,\n  \"cardReadMethod\": \"MAGNETIC_STRIPE\",\n  \"requirePIN\": false,\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
-            },
-            "url": { "raw": "{{posUrl}}/api/pos/transaction", "host": ["{{posUrl}}"], "path": ["api", "pos", "transaction"] },
-            "description": "Compare the response's emvVerified/pinVerified fields against the CHIP+PIN request above - EMV only runs for CHIP reads."
-          }
-        }
-      ]
-    }
-  ]
+	"info": {
+		"name": "Payment System - Call Every Controller Directly",
+		"description": "Hits each service's controller directly - not just through the orchestrated flow - so you can see what each hop in the authorization chain actually does on its own. Folder 2 is the interesting one: it calls Merchant, Acquirer, Network, and Issuer's controllers one at a time, the same way transaction-service does internally. Folder 3 shows the same thing happening automatically when you call the real entry points.\n\nStart the services first (service-registry, security-service, merchant-service, acquirer-service, network-service, issuer-service, transaction-service, pos-terminal-service - see GETTING-STARTED.md or run ./start-all.sh), run Folder 0 once first to get a token (every service now rejects requests without one - see JwtAuthenticationFilter), then Folder 1 top to bottom to populate merchantId/cardNumber/cvv, then explore Folders 2-4 in any order.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "securityUrl",
+			"value": "http://localhost:8089"
+		},
+		{
+			"key": "merchantUrl",
+			"value": "http://localhost:8081"
+		},
+		{
+			"key": "acquirerUrl",
+			"value": "http://localhost:8082"
+		},
+		{
+			"key": "issuerUrl",
+			"value": "http://localhost:8083"
+		},
+		{
+			"key": "networkUrl",
+			"value": "http://localhost:8084"
+		},
+		{
+			"key": "transactionUrl",
+			"value": "http://localhost:8085"
+		},
+		{
+			"key": "posUrl",
+			"value": "http://localhost:8091"
+		},
+		{
+			"key": "merchantId",
+			"value": ""
+		},
+		{
+			"key": "cardId",
+			"value": ""
+		},
+		{
+			"key": "cardNumber",
+			"value": ""
+		},
+		{
+			"key": "cvv",
+			"value": ""
+		},
+		{
+			"key": "transactionId",
+			"value": ""
+		},
+		{
+			"key": "jwtToken",
+			"value": ""
+		}
+	],
+	"item": [
+		{
+			"name": "0. Get Authenticated (run this first)",
+			"item": [
+				{
+					"name": "Get Demo Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('jwtToken', body.accessToken);",
+									"pm.test('got a token', () => pm.response.code === 200 && !!body.accessToken);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"demo\",\n  \"password\": \"demo123\"\n}"
+						},
+						"url": {
+							"raw": "{{securityUrl}}/api/auth/token",
+							"host": [
+								"{{securityUrl}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"token"
+							]
+						},
+						"description": "AuthController.issueToken() on security-service. Demo credentials only (username 'demo', password 'demo123') - see the class comment there for why. Its test script captures the token into {{jwtToken}}, which every other request in this collection sends as 'Authorization: Bearer {{jwtToken}}'. Every service in the flow now rejects requests without one (JwtAuthenticationFilter) - try deleting the Authorization header from any request below and re-sending it to see the 401."
+					}
+				}
+			]
+		},
+		{
+			"name": "1. Setup (run these three first)",
+			"item": [
+				{
+					"name": "Create Merchant",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('merchantId', body.id);",
+									"pm.test('merchant created', () => pm.response.code === 201);",
+									"pm.test('status is PENDING_VERIFICATION', () => body.status === 'PENDING_VERIFICATION');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"businessName\": \"Coffee Shop\",\n  \"email\": \"shop-{{$randomInt}}@coffee.com\",\n  \"phone\": \"+12025550123\",\n  \"address\": \"123 Main Street\",\n  \"taxId\": \"12-3456789-{{$randomInt}}\",\n  \"merchantCategoryCode\": \"5814\",\n  \"dailyLimit\": 10000,\n  \"monthlyLimit\": 300000\n}"
+						},
+						"url": {
+							"raw": "{{merchantUrl}}/api/merchants",
+							"host": [
+								"{{merchantUrl}}"
+							],
+							"path": [
+								"api",
+								"merchants"
+							]
+						},
+						"description": "MerchantController.createMerchant(). New merchants start PENDING_VERIFICATION - nothing can transact against them until activated below."
+					}
+				},
+				{
+					"name": "Activate Merchant",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.test('status is ACTIVE', () => body.status === 'ACTIVE');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PUT",
+						"url": {
+							"raw": "{{merchantUrl}}/api/merchants/{{merchantId}}/status?status=ACTIVE",
+							"host": [
+								"{{merchantUrl}}"
+							],
+							"path": [
+								"api",
+								"merchants",
+								"{{merchantId}}",
+								"status"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "ACTIVE"
+								}
+							]
+						},
+						"description": "MerchantController.updateStatus(). Every merchant-limit check downstream fails until this runs.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Issue Card",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('cardId', body.id);",
+									"pm.collectionVariables.set('cardNumber', body.cardNumber);",
+									"pm.collectionVariables.set('cvv', body.cvv);",
+									"pm.test('card issued', () => pm.response.code === 201);",
+									"pm.test('full PAN/CVV returned at issuance', () => body.cardNumber && body.cardNumber.length === 16 && body.cvv);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"cardholderName\": \"John Doe\",\n  \"cardType\": \"CREDIT\",\n  \"network\": \"VISA\",\n  \"creditLimit\": 5000\n}"
+						},
+						"url": {
+							"raw": "{{issuerUrl}}/api/cards",
+							"host": [
+								"{{issuerUrl}}"
+							],
+							"path": [
+								"api",
+								"cards"
+							]
+						},
+						"description": "IssuerController.issueCard(). This is the ONLY endpoint that ever returns the full, unmasked card number and CVV - every other card endpoint masks them. That's why cardNumber/cvv get captured here into collection variables for the rest of the requests to use."
+					}
+				}
+			]
+		},
+		{
+			"name": "2. Call Each Controller Directly (understand one hop at a time)",
+			"item": [
+				{
+					"name": "Merchant - Validate For Transaction",
+					"request": {
+						"method": "POST",
+						"url": {
+							"raw": "{{merchantUrl}}/api/merchants/{{merchantId}}/validate?amount=25.99",
+							"host": [
+								"{{merchantUrl}}"
+							],
+							"path": [
+								"api",
+								"merchants",
+								"{{merchantId}}",
+								"validate"
+							],
+							"query": [
+								{
+									"key": "amount",
+									"value": "25.99"
+								}
+							]
+						},
+						"description": "MerchantController.validateForTransaction(). Checks the merchant is ACTIVE and that this amount wouldn't blow past its daily/monthly limit. This is the FIRST thing transaction-service calls before anything else - a merchant that fails this never even reaches the acquirer.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Acquirer - Process Acquiring (fraud/velocity check)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"amount\": 25.99,\n  \"terminalId\": \"TERM0001\"\n}"
+						},
+						"url": {
+							"raw": "{{acquirerUrl}}/api/acquirers/process",
+							"host": [
+								"{{acquirerUrl}}"
+							],
+							"path": [
+								"api",
+								"acquirers",
+								"process"
+							]
+						},
+						"description": "AcquirerController.processAcquiring() - the merchant's bank running fraud/velocity screening. Response includes fraudScore so you can see the number behind the approve/decline call. Note: with today's scoring formula the max reachable score is 49 against an 80-point decline threshold, so this always approves - worth noticing while you explore."
+					}
+				},
+				{
+					"name": "Network - Route Transaction",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"amount\": 25.99\n}"
+						},
+						"url": {
+							"raw": "{{networkUrl}}/api/network/route",
+							"host": [
+								"{{networkUrl}}"
+							],
+							"path": [
+								"api",
+								"network",
+								"route"
+							]
+						},
+						"description": "NetworkController.routeTransaction() - identifies the card network from its first digit (BIN) and calculates the network's interchange fee. Try changing cardNumber's first digit (4=VISA, 5=MASTERCARD, 3=AMEX, anything else=LOCAL) and re-running to see the fee change."
+					}
+				},
+				{
+					"name": "Network - Identify Card Network (GET)",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{networkUrl}}/api/network/identify/{{cardNumber}}",
+							"host": [
+								"{{networkUrl}}"
+							],
+							"path": [
+								"api",
+								"network",
+								"identify",
+								"{{cardNumber}}"
+							]
+						},
+						"description": "NetworkController.identifyNetwork() - just the BIN lookup, no fee calculation.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Issuer - Authorize (basic, no PIN/MAC/EMV)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"amount\": 25.99,\n  \"currency\": \"USD\",\n  \"merchantId\": \"{{merchantId}}\"\n}"
+						},
+						"url": {
+							"raw": "{{issuerUrl}}/api/cards/authorize",
+							"host": [
+								"{{issuerUrl}}"
+							],
+							"path": [
+								"api",
+								"cards",
+								"authorize"
+							]
+						},
+						"description": "IssuerController.authorize() - the cardholder's own bank making the final call: card active? not blocked? CVV correct? enough available balance? This is the actual last-mile decision every other hop in the chain leads up to. Try a wrong CVV or an amount over 5000 (the card's credit limit) to see it decline."
+					}
+				},
+				{
+					"name": "Issuer - Block Card",
+					"request": {
+						"method": "PUT",
+						"url": {
+							"raw": "{{issuerUrl}}/api/cards/{{cardId}}/block",
+							"host": [
+								"{{issuerUrl}}"
+							],
+							"path": [
+								"api",
+								"cards",
+								"{{cardId}}",
+								"block"
+							]
+						},
+						"description": "Block the card, then re-run 'Issuer - Authorize' above to see it decline with 'Card is blocked'.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Issuer - Unblock Card",
+					"request": {
+						"method": "PUT",
+						"url": {
+							"raw": "{{issuerUrl}}/api/cards/{{cardId}}/unblock",
+							"host": [
+								"{{issuerUrl}}"
+							],
+							"path": [
+								"api",
+								"cards",
+								"{{cardId}}",
+								"unblock"
+							]
+						},
+						"description": "Undo the block above.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "3. Full Orchestrated Flow (transaction-service calls all four above for you)",
+			"item": [
+				{
+					"name": "Transaction - Authorize (approved example)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"const body = pm.response.json();",
+									"pm.collectionVariables.set('transactionId', body.id);",
+									"pm.test('AUTHORIZED', () => body.status === 'AUTHORIZED');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"terminalId\": \"TERM0001\",\n  \"type\": \"PURCHASE\",\n  \"amount\": 25.99,\n  \"currency\": \"USD\"\n}"
+						},
+						"url": {
+							"raw": "{{transactionUrl}}/api/transactions/authorize",
+							"host": [
+								"{{transactionUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"authorize"
+							]
+						},
+						"description": "TransactionController.authorize() - the real orchestrated entry point. Internally this calls the exact same four controllers from Folder 2, in order: Merchant -> Acquirer -> Network -> Issuer, stopping at whichever one says no. Watch each service's own console/log while this runs to see all four fire within milliseconds of each other."
+					}
+				},
+				{
+					"name": "Transaction - Authorize (declined: exceeds daily limit)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"merchantId\": \"{{merchantId}}\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"cvv\": \"{{cvv}}\",\n  \"terminalId\": \"TERM0001\",\n  \"type\": \"PURCHASE\",\n  \"amount\": 9999.00,\n  \"currency\": \"USD\"\n}"
+						},
+						"url": {
+							"raw": "{{transactionUrl}}/api/transactions/authorize",
+							"host": [
+								"{{transactionUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"authorize"
+							]
+						},
+						"description": "Same endpoint, an amount that pushes the merchant over its $10,000 daily limit. Returns 200 OK with status: DECLINED and responseCode 03 - declines are a normal business outcome here, not an HTTP error (see TESTING.md for why that matters for Feign callers like the POS terminal)."
+					}
+				},
+				{
+					"name": "Transaction - Get By Id",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{transactionUrl}}/api/transactions/{{transactionId}}",
+							"host": [
+								"{{transactionUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"{{transactionId}}"
+							]
+						},
+						"description": "Fetch the persisted record back independently of the authorize response - proves it actually landed in the database, with the acquirerId/networkId/issuerId trail populated.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Transaction - Get All For Merchant",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{transactionUrl}}/api/transactions/merchant/{{merchantId}}",
+							"host": [
+								"{{transactionUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"merchant",
+								"{{merchantId}}"
+							]
+						},
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				},
+				{
+					"name": "Transaction - Refund",
+					"request": {
+						"method": "POST",
+						"url": {
+							"raw": "{{transactionUrl}}/api/transactions/{{transactionId}}/refund",
+							"host": [
+								"{{transactionUrl}}"
+							],
+							"path": [
+								"api",
+								"transactions",
+								"{{transactionId}}",
+								"refund"
+							]
+						},
+						"description": "Only works on an AUTHORIZED/CAPTURED/SETTLED transaction - run the approved request above first. Returns 409 if the transaction isn't in a refundable state.",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "4. POS Terminal (the real card-present simulation)",
+			"item": [
+				{
+					"name": "POS - Chip + PIN Purchase (approved)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 2599,\n  \"cardReadMethod\": \"CHIP\",\n  \"requirePIN\": true,\n  \"pin\": \"1234\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
+						},
+						"url": {
+							"raw": "{{posUrl}}/api/pos/transaction",
+							"host": [
+								"{{posUrl}}"
+							],
+							"path": [
+								"api",
+								"pos",
+								"transaction"
+							]
+						},
+						"description": "POSController.processTransaction() - the terminal itself: reads the card, formats+encrypts a PIN block, generates an EMV cryptogram, builds an ISO 8583 message, signs it with a MAC, THEN calls Transaction - Authorize above over real HTTP (not simulated). amount is in CENTS here, unlike every other endpoint in this collection which uses dollars - that's a real inconsistency between this simulated terminal and the rest of the system, worth noticing. The response includes a printable receipt string."
+					}
+				},
+				{
+					"name": "POS - Chip + PIN Purchase (declined: exceeds daily limit)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 999900,\n  \"cardReadMethod\": \"CHIP\",\n  \"requirePIN\": true,\n  \"pin\": \"1234\",\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
+						},
+						"url": {
+							"raw": "{{posUrl}}/api/pos/transaction",
+							"host": [
+								"{{posUrl}}"
+							],
+							"path": [
+								"api",
+								"pos",
+								"transaction"
+							]
+						},
+						"description": "$9,999.00 in cents. The receipt field in the response will show the SPECIFIC decline reason from transaction-service (\"Daily limit exceeded\"), not a generic code description."
+					}
+				},
+				{
+					"name": "POS - Magnetic Stripe, No PIN",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwtToken}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"terminalId\": \"TERM0001\",\n  \"merchantId\": \"{{merchantId}}\",\n  \"merchantName\": \"Coffee Shop\",\n  \"amount\": 1500,\n  \"cardReadMethod\": \"MAGNETIC_STRIPE\",\n  \"requirePIN\": false,\n  \"cardNumber\": \"{{cardNumber}}\",\n  \"expiryDate\": \"2812\",\n  \"cvv\": \"{{cvv}}\"\n}"
+						},
+						"url": {
+							"raw": "{{posUrl}}/api/pos/transaction",
+							"host": [
+								"{{posUrl}}"
+							],
+							"path": [
+								"api",
+								"pos",
+								"transaction"
+							]
+						},
+						"description": "Compare the response's emvVerified/pinVerified fields against the CHIP+PIN request above - EMV only runs for CHIP reads."
+					}
+				}
+			]
+		}
+	]
 }
