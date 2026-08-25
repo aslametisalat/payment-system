@@ -456,8 +456,9 @@ cd ../issuer-service && mvn clean install
 
 ### Recommended Reading Order
 1. **README.md** - Project overview
-2. **ARCHITECTURE.md** - System design
-3. **API-TESTING-GUIDE.md** - Detailed API testing
+2. **SERVICES.md** - What each service actually does today, and the real request flow (start here if ARCHITECTURE.md's diagram doesn't match what you're seeing)
+3. **ARCHITECTURE.md** - Original system design
+4. **API-TESTING-GUIDE.md** - Detailed API testing
 4. **This file** - Getting started
 
 ### Key Concepts to Understand
@@ -579,5 +580,6 @@ A: Check the documentation files, examine the code, use H2 consoles to inspect d
 
 Start experimenting, break things, fix them, and learn! 🚀
 
+For what each service actually does and the real flow, see **SERVICES.md**  
 For detailed API documentation, see **API-TESTING-GUIDE.md**  
-For architecture details, see **ARCHITECTURE.md**
+For the original architecture design, see **ARCHITECTURE.md**

@@ -7,8 +7,9 @@ Welcome to the **Complete POS Payment System**! This is a production-grade micro
 ### Start Here (in order):
 1. **[README.md](README.md)** - Project overview and introduction
 2. **[GETTING-STARTED.md](GETTING-STARTED.md)** - Installation and first transaction
-3. **[API-TESTING-GUIDE.md](API-TESTING-GUIDE.md)** - Complete API reference
-4. **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design and architecture
+3. **[SERVICES.md](SERVICES.md)** - What each service actually does today, and the real request flow
+4. **[API-TESTING-GUIDE.md](API-TESTING-GUIDE.md)** - Complete API reference
+5. **[ARCHITECTURE.md](ARCHITECTURE.md)** - Original system design and architecture
 
 ## 🚀 Quick Start (5 minutes)
 
