@@ -20,6 +20,8 @@ public class TransactionResponse {
     private String authorizationCode;
     private String responseCode;
     private String responseMessage;
+    private String stan;
+    private String rrn;
     private LocalDateTime createdAt;
     // The hop-by-hop trail this transaction took - see TransactionStepDto.
     private List<TransactionStepDto> steps;

@@ -158,6 +158,8 @@ public class POSTransactionService {
                     .amount(BigDecimal.valueOf(request.getAmount(), 2)) // cents -> dollars
                     .currency("USD")
                     .idempotencyKey(idempotencyKey)
+                    .stan(stan)
+                    .rrn(rrn)
                     .build();
             TransactionResponse txnResponse = resilientAuthorize(authRequest);
 

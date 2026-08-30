@@ -44,7 +44,12 @@ public class Transaction {
     private String authorizationCode;
     private String responseCode;
     private String responseMessage;
-    
+
+    // ISO 8583 fields 11/37 - generated at the terminal (or here, if the
+    // caller didn't send one) and carried unchanged through every hop.
+    private String stan;
+    private String rrn;
+
     private String acquirerId;
     private String issuerId;
     private String networkId;
