@@ -1,5 +1,6 @@
 package com.payment.issuer.service;
 
+import com.payment.common.enums.ResponseCode;
 import com.payment.issuer.dto.*;
 import com.payment.issuer.model.Card;
 import com.payment.issuer.repository.CardRepository;
@@ -90,23 +91,26 @@ public class CardService {
         Card card = cardRepository.findByCardNumber(request.getCardNumber())
             .orElseThrow(() -> new RuntimeException("Card not found"));
         
-        // Validate card
+        // Validate card - each decline carries the real ISO 8583 response
+        // code for the reason (a real issuer host doesn't send "05" for
+        // everything; the code is what downstream systems and network
+        // rules actually key off of, the message is just for humans/logs).
         if (!card.isActive()) {
-            return buildDeclinedResponse("Card is not active");
+            return buildDeclinedResponse(ResponseCode.RESTRICTED_CARD, "Card is not active");
         }
-        
+
         if (card.isBlocked()) {
-            return buildDeclinedResponse("Card is blocked");
+            return buildDeclinedResponse(ResponseCode.PICK_UP_CARD, "Card is blocked");
         }
-        
+
         // Validate CVV
         if (!card.getCvv().equals(request.getCvv())) {
-            return buildDeclinedResponse("Invalid CVV");
+            return buildDeclinedResponse(ResponseCode.DO_NOT_HONOR, "Invalid CVV");
         }
-        
+
         // Check balance/limit
         if (card.getAvailableBalance().compareTo(request.getAmount()) < 0) {
-            return buildDeclinedResponse("Insufficient funds");
+            return buildDeclinedResponse(ResponseCode.INSUFFICIENT_FUNDS, "Insufficient funds");
         }
         
         // Approve and hold funds
@@ -119,12 +123,12 @@ public class CardService {
         return AuthorizationResponse.builder()
             .approved(true)
             .authorizationCode(authCode)
-            .responseCode("00")
-            .message("Approved")
+            .responseCode(ResponseCode.APPROVED.getCode())
+            .message(ResponseCode.APPROVED.getMessage())
             .transactionId(UUID.randomUUID().toString())
             .build();
     }
-    
+
     @Transactional
     public void blockCard(String cardId) {
         Card card = cardRepository.findById(cardId)
@@ -162,13 +166,16 @@ public class CardService {
         return cardNumber.substring(0, 4) + "********" + cardNumber.substring(12);
     }
     
-    private AuthorizationResponse buildDeclinedResponse(String reason) {
+    // Real issuer hosts still assign a reference to a declined
+    // authorization (it's what shows up in the network's exception/dispute
+    // reports later) - only authorizationCode is reserved for approvals.
+    private AuthorizationResponse buildDeclinedResponse(ResponseCode code, String reason) {
         return AuthorizationResponse.builder()
             .approved(false)
             .authorizationCode(null)
-            .responseCode("05")
+            .responseCode(code.getCode())
             .message(reason)
-            .transactionId(null)
+            .transactionId(UUID.randomUUID().toString())
             .build();
     }
     

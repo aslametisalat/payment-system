@@ -32,4 +32,13 @@ public class TransactionRequest {
     // without risking a duplicate authorization - see
     // TransactionProcessingService.processTransaction().
     private String idempotencyKey;
+
+    // System Trace Audit Number / Retrieval Reference Number - the two
+    // fields a real terminal generates once, up front, and that follow the
+    // authorization unchanged through every hop of the switch to the
+    // issuer and back (ISO 8583 fields 11 and 37). If the caller doesn't
+    // send them, TransactionProcessingService generates its own so the
+    // switch-style trace always has something realistic to show.
+    private String stan;
+    private String rrn;
 }

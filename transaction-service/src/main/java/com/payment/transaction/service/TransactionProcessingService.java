@@ -17,6 +17,7 @@ import com.payment.transaction.dto.TransactionStepDto;
 import com.payment.transaction.model.Transaction;
 import com.payment.transaction.model.TransactionStep;
 import com.payment.transaction.repository.TransactionRepository;
+import com.payment.common.enums.ResponseCode;
 import com.payment.common.enums.TransactionStatus;
 import com.payment.common.event.TransactionCompletedEvent;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -33,6 +34,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -98,6 +101,16 @@ public class TransactionProcessingService {
             }
         }
 
+        // STAN/RRN (ISO 8583 fields 11 and 37): generated once, at the
+        // terminal in the real flow, and carried unchanged through every
+        // hop of the switch. If a caller didn't send them (e.g. a direct
+        // API call rather than through pos-terminal-service), the switch
+        // assigns its own so every trace still has real reference numbers.
+        String stan = (request.getStan() != null && !request.getStan().isBlank())
+                ? request.getStan() : generateStan();
+        String rrn = (request.getRrn() != null && !request.getRrn().isBlank())
+                ? request.getRrn() : generateRrn();
+
         // Create transaction record
         Transaction transaction = new Transaction();
         transaction.setMerchantId(request.getMerchantId());
@@ -108,6 +121,8 @@ public class TransactionProcessingService {
         transaction.setCurrency(request.getCurrency());
         transaction.setStatus(TransactionStatus.PENDING);
         transaction.setIdempotencyKey(idempotencyKey);
+        transaction.setStan(stan);
+        transaction.setRrn(rrn);
 
         try {
             transaction = transactionRepository.save(transaction);
@@ -128,10 +143,13 @@ public class TransactionProcessingService {
             // its daily/monthly volume limits for this amount?
             MerchantValidationResult merchantResult = callStep(transaction, "Merchant Validation",
                     "merchant-service",
-                    () -> merchantClient.validateForTransaction(request.getMerchantId(), request.getAmount()));
+                    () -> merchantClient.validateForTransaction(request.getMerchantId(), request.getAmount()),
+                    r -> String.format("MTI 0100 | STAN %s | Merchant %s | %s",
+                            stan, request.getMerchantId(), r.getMessage()));
             if (!merchantResult.isValid()) {
                 log.warn("Merchant validation failed: {}", merchantResult.getMessage());
-                return decline(transaction, "03", merchantResult.getMessage(), "merchant-service");
+                return decline(transaction, ResponseCode.INVALID_MERCHANT.getCode(),
+                        merchantResult.getMessage(), "merchant-service");
             }
 
             // Step 2: Acquirer Service - the merchant's bank runs fraud and
@@ -142,11 +160,14 @@ public class TransactionProcessingService {
                             .cardNumber(request.getCardNumber())
                             .amount(request.getAmount())
                             .terminalId(request.getTerminalId())
-                            .build()));
+                            .build()),
+                    r -> String.format("MTI 0100 | STAN %s | Acquirer %s | Fraud score %s/100 | %s",
+                            stan, r.getAcquirerId(), r.getFraudScore(), r.getMessage()));
             transaction.setAcquirerId(acquirerResponse.getAcquirerId());
             if (!Boolean.TRUE.equals(acquirerResponse.getApproved())) {
                 log.warn("Acquirer declined: {}", acquirerResponse.getMessage());
-                return decline(transaction, "63", acquirerResponse.getMessage(), "acquirer-service");
+                return decline(transaction, ResponseCode.SECURITY_VIOLATION.getCode(),
+                        acquirerResponse.getMessage(), "acquirer-service");
             }
 
             // Step 3: Network Service - identify the card's network from its
@@ -155,7 +176,10 @@ public class TransactionProcessingService {
                     () -> networkClient.route(RoutingRequest.builder()
                             .cardNumber(request.getCardNumber())
                             .amount(request.getAmount())
-                            .build()));
+                            .build()),
+                    r -> String.format("MTI 0100 | STAN %s | BIN %s routed via %s to %s | network fee $%s",
+                            stan, binOf(request.getCardNumber()), r.getNetwork(), r.getIssuerId(),
+                            r.getNetworkFee()));
             transaction.setNetworkId(
                     routingResponse.getNetwork() != null ? routingResponse.getNetwork().name() : null);
             transaction.setIssuerId(routingResponse.getIssuerId());
@@ -170,7 +194,10 @@ public class TransactionProcessingService {
             authRequest.setMerchantId(request.getMerchantId());
 
             AuthorizationResponse authResponse = callStep(transaction, "Issuer Authorization", "issuer-service",
-                    () -> issuerClient.authorize(authRequest));
+                    () -> issuerClient.authorize(authRequest),
+                    r -> String.format("MTI 0110 | STAN %s | RRN %s | Resp %s-%s%s",
+                            stan, rrn, r.getResponseCode(), r.getMessage(),
+                            r.isApproved() ? " | Auth Code " + r.getAuthorizationCode() : ""));
 
             // Update transaction with response
             if (authResponse.isApproved()) {
@@ -210,13 +237,16 @@ public class TransactionProcessingService {
      * Runs one Feign call to another service - through a per-service circuit
      * breaker, and a retry too if that hop is idempotent-safe (see
      * RETRYABLE_TARGETS) - recording how it went as a TransactionStep either
-     * way: SUCCESS with the response received, or FAILED with the exception
+     * way: SUCCESS with a switch-style message built from the real response
+     * by detailFormatter (MTI, STAN/RRN, response code - the same fields a
+     * real acquirer/network log would show), or FAILED with the exception
      * message (a tripped-open breaker included), before re-throwing so the
      * outer catch in processTransaction can still fail the whole
      * transaction. This is what makes it possible to see *which* hop broke,
      * not just that something did.
      */
-    private <T> T callStep(Transaction transaction, String stepName, String target, Supplier<T> call) {
+    private <T> T callStep(Transaction transaction, String stepName, String target, Supplier<T> call,
+                            Function<T, String> detailFormatter) {
         long start = System.currentTimeMillis();
         try {
             CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(target);
@@ -226,12 +256,27 @@ public class TransactionProcessingService {
                 decorated = Retry.decorateSupplier(retry, decorated);
             }
             T result = decorated.get();
-            addStep(transaction, stepName, target, "SUCCESS", "Responded normally", start);
+            addStep(transaction, stepName, target, "SUCCESS", detailFormatter.apply(result), start);
             return result;
         } catch (RuntimeException e) {
-            addStep(transaction, stepName, target, "FAILED", e.getMessage(), start);
+            addStep(transaction, stepName, target, "FAILED",
+                    String.format("MTI 0100 | STAN %s | %s did not respond: %s",
+                            transaction.getStan(), target, e.getMessage()),
+                    start);
             throw e;
         }
+    }
+
+    private static String binOf(String cardNumber) {
+        return cardNumber != null && cardNumber.length() >= 6 ? cardNumber.substring(0, 6) : "??????";
+    }
+
+    private static String generateStan() {
+        return String.format("%06d", ThreadLocalRandom.current().nextInt(1000000));
+    }
+
+    private static String generateRrn() {
+        return String.format("%012d", Math.abs(ThreadLocalRandom.current().nextLong()) % 1000000000000L);
     }
 
     private void addStep(Transaction transaction, String stepName, String target, String status,
@@ -251,7 +296,9 @@ public class TransactionProcessingService {
         transaction.setStatus(TransactionStatus.DECLINED);
         transaction.setResponseCode(responseCode);
         transaction.setResponseMessage(message);
-        addStep(transaction, "Declined", declinedBy, "DECLINED", message, System.currentTimeMillis());
+        addStep(transaction, "Declined", declinedBy, "DECLINED",
+                String.format("MTI 0110 | STAN %s | Resp %s-%s", transaction.getStan(), responseCode, message),
+                System.currentTimeMillis());
         return finish(transaction);
     }
 
@@ -356,6 +403,8 @@ public class TransactionProcessingService {
             .authorizationCode(transaction.getAuthorizationCode())
             .responseCode(transaction.getResponseCode())
             .responseMessage(transaction.getResponseMessage())
+            .stan(transaction.getStan())
+            .rrn(transaction.getRrn())
             .createdAt(transaction.getCreatedAt())
             .steps(steps)
             .build();
